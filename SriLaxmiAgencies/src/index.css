@@ -1,0 +1,111 @@
+﻿*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f0f4f8;
+  color: #0f1923;
+}
+
+#root { width: 100%; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #b0bccf; border-radius: 3px; }
+
+/* Focus ring */
+:focus-visible { outline: 2px solid #1e6fbf; outline-offset: 2px; }
+
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; }
+
+/* Row hover animation */
+.erp-tr {
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.erp-tr:hover {
+  background: #f0f6ff !important;
+  transform: translateX(2px);
+}
+
+/* Card hover */
+.erp-card {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.erp-card:hover {
+  box-shadow: 0 8px 24px rgba(15,32,53,0.14) !important;
+  transform: translateY(-2px);
+}
+
+/* Stat card pulse on load */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.erp-stat-card {
+  animation: fadeSlideUp 0.4s ease both;
+}
+.erp-stat-card:nth-child(1) { animation-delay: 0.05s; }
+.erp-stat-card:nth-child(2) { animation-delay: 0.10s; }
+.erp-stat-card:nth-child(3) { animation-delay: 0.15s; }
+.erp-stat-card:nth-child(4) { animation-delay: 0.20s; }
+.erp-stat-card:nth-child(5) { animation-delay: 0.25s; }
+
+/* Page fade in */
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.erp-page { animation: pageFadeIn 0.3s ease both; }
+
+/* Button press */
+.erp-btn {
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+.erp-btn:hover { filter: brightness(1.08); }
+.erp-btn:active { transform: scale(0.97); }
+
+/* Badge pulse for danger */
+@keyframes badgePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.erp-badge-danger { animation: badgePulse 2s ease infinite; }
+
+/* Form slide down */
+@keyframes slideDown {
+  from { opacity: 0; max-height: 0; transform: translateY(-8px); }
+  to   { opacity: 1; max-height: 600px; transform: translateY(0); }
+}
+.erp-form-box { animation: slideDown 0.25s ease both; overflow: hidden; }
+
+/* Sidebar link */
+.erp-nav-link {
+  transition: background 0.15s, color 0.15s, border-color 0.15s, padding-left 0.15s;
+}
+.erp-nav-link:hover { padding-left: 18px !important; }
+
+/* Table wrap */
+.erp-table-wrap {
+  transition: box-shadow 0.2s;
+}
+
+/* Input focus glow */
+.erp-input:focus {
+  border-color: #1e6fbf !important;
+  box-shadow: 0 0 0 3px rgba(30,111,191,0.12) !important;
+}
+
+/* Dark mode overrides */
+[data-theme="dark"] .erp-tr:hover { background: #1a2535 !important; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #1e2d3d; }
+[data-theme="dark"] .erp-input:focus { border-color: #3b9ede !important; box-shadow: 0 0 0 3px rgba(59,158,222,0.15) !important; }
+
+/* Spinner */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,53 @@
+package com.srilaxmi.erp.controller;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.srilaxmi.erp.service.ProductService;
+import com.srilaxmi.erp.service.CustomerService;
+import com.srilaxmi.erp.service.SupplierService;
+import com.srilaxmi.erp.service.PurchaseOrderService;
+import com.srilaxmi.erp.service.SalesOrderService;
+import com.srilaxmi.erp.service.InvoiceService;
+
+@RestController
+@RequestMapping("/api/dashboard")
+public class DashboardController {
+
+    @Autowired
+    private ProductService productService;
+
+    @Autowired
+    private CustomerService customerService;
+
+    @Autowired
+    private SupplierService supplierService;
+
+    @Autowired
+    private PurchaseOrderService purchaseOrderService;
+
+    @Autowired
+    private SalesOrderService salesOrderService;
+
+    @Autowired
+    private InvoiceService invoiceService;
+
+    @GetMapping
+    public Map<String, Object> getDashboardData() {
+        Map<String, Object> dashboard = new HashMap<>();
+        
+        dashboard.put("totalProducts", productService.getAllProducts().size());
+        dashboard.put("totalCustomers", customerService.getAllCustomers().size());
+        dashboard.put("totalSuppliers", supplierService.getAllSuppliers().size());
+        dashboard.put("totalPurchaseOrders", purchaseOrderService.getAllPurchaseOrders().size());
+        dashboard.put("totalSalesOrders", salesOrderService.getAllSalesOrders().size());
+        dashboard.put("totalInvoices", invoiceService.getAllInvoices().size());
+        
+        return dashboard;
+    }
+}

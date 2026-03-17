@@ -17,6 +17,7 @@ public class SupplierPaymentService {
 
     @Autowired private SupplierPaymentRepository supplierPaymentRepository;
     @Autowired private PurchaseOrderRepository purchaseOrderRepository;
+    @Autowired private PurchaseOrderService purchaseOrderService;
 
     @Transactional
     public SupplierPayment recordPayment(Long poId, SupplierPayment payment) {
@@ -27,11 +28,16 @@ public class SupplierPaymentService {
         PurchaseOrder po = purchaseOrderRepository.findById(poId)
             .orElseThrow(() -> new RuntimeException("Purchase Order not found"));
 
+        // Payment is capped at received goods value, not original PO total
+        BigDecimal receivedValue = purchaseOrderService.getReceivedValue(poId);
         BigDecimal totalPaid = supplierPaymentRepository.sumByPurchaseOrderId(poId);
-        BigDecimal due = (po.getTotalAmount() != null ? po.getTotalAmount() : BigDecimal.ZERO).subtract(totalPaid);
+        BigDecimal due = receivedValue.subtract(totalPaid);
+
+        if (due.compareTo(BigDecimal.ZERO) <= 0)
+            throw new RuntimeException("No outstanding amount — all received goods have been paid for.");
 
         if (payment.getAmount().compareTo(due) > 0)
-            throw new RuntimeException("Payment exceeds outstanding amount of ₹" + due);
+            throw new RuntimeException("Payment of ₹" + payment.getAmount() + " exceeds outstanding amount of ₹" + due);
 
         payment.setPurchaseOrder(po);
         return supplierPaymentRepository.save(payment);

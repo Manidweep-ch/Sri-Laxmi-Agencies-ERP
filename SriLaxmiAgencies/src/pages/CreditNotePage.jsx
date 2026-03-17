@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+﻿import { useEffect, useState, useRef } from "react";
 import MainLayout from "../layout/MainLayout";
 import { getCreditNotes, createCreditNote } from "../services/creditNoteService";
 import { getInvoiceSummaries } from "../services/invoiceService";
@@ -79,7 +79,7 @@ export default function CreditNotePage() {
     if (!selectedInvoice) { setError("Select an invoice"); return; }
     if (!amount || parseFloat(amount) <= 0) { setError("Enter a valid amount"); return; }
     if (outstanding && parseFloat(amount) > parseFloat(outstanding.outstandingAmount || 0)) {
-      setError(`Amount cannot exceed outstanding balance of ₹${parseFloat(outstanding.outstandingAmount).toFixed(2)}`); return;
+      setError(`Amount cannot exceed outstanding balance of Rs.${parseFloat(outstanding.outstandingAmount).toFixed(2)}`); return;
     }
     try {
       setLoading(true); setError("");
@@ -118,12 +118,12 @@ export default function CreditNotePage() {
             <div>
               <label style={ps.label}>Invoice * (outstanding &gt; 0 only)</label>
               <SearchDropdown placeholder="Search invoice..." items={invoices} t={t}
-                labelFn={i => `${i.invoiceNumber} — ${i.customerName || ""} (Due: ₹${parseFloat(i.dueAmount||0).toFixed(2)})`}
+                labelFn={i => `${i.invoiceNumber} — ${i.customerName || ""} (Due: Rs.${parseFloat(i.dueAmount||0).toFixed(2)})`}
                 value={invoiceSearch} onChange={setInvoiceSearch}
                 onSelect={(inv) => { handleSelectInvoice(inv); setInvoiceSearch(inv ? `${inv.invoiceNumber} — ${inv.customerName || ""}` : ""); }} />
               {outstanding && (
                 <div style={{ marginTop: "5px", fontSize: "12px", color: t.textSub }}>
-                  Outstanding: <span style={{ color: t.danger, fontWeight: 700 }}>₹{parseFloat(outstanding.outstandingAmount || 0).toFixed(2)}</span>
+                  Outstanding: <span style={{ color: t.danger, fontWeight: 700 }}>Rs.{parseFloat(outstanding.outstandingAmount || 0).toFixed(2)}</span>
                 </div>
               )}
             </div>
@@ -132,11 +132,11 @@ export default function CreditNotePage() {
               <input style={inp} type="date" value={cnDate} onChange={e => setCnDate(e.target.value)} />
             </div>
             <div>
-              <label style={ps.label}>Amount (₹) *</label>
+              <label style={ps.label}>Amount (Rs.) *</label>
               <input style={inp} type="number" placeholder="0.00"
                 max={outstanding ? parseFloat(outstanding.outstandingAmount) : undefined}
                 value={amount} onChange={e => setAmount(e.target.value)} />
-              {outstanding && <div style={{ fontSize: "11px", color: t.textMuted, marginTop: "3px" }}>Max: ₹{parseFloat(outstanding.outstandingAmount || 0).toFixed(2)}</div>}
+              {outstanding && <div style={{ fontSize: "11px", color: t.textMuted, marginTop: "3px" }}>Max: Rs.{parseFloat(outstanding.outstandingAmount || 0).toFixed(2)}</div>}
             </div>
           </div>
           <div style={{ marginBottom: "16px" }}>
@@ -167,7 +167,7 @@ export default function CreditNotePage() {
                 <td style={ps.tdSub}>{fmt(cn.date)}</td>
                 <td style={ps.td}>{cn.invoice?.invoiceNumber || "-"}</td>
                 <td style={ps.td}>{cn.invoice?.customer?.name || "-"}</td>
-                <td style={{ ...ps.td, color: t.warning, fontWeight: 700 }}>₹{parseFloat(cn.amount || 0).toFixed(2)}</td>
+                <td style={{ ...ps.td, color: t.warning, fontWeight: 700 }}>Rs.{parseFloat(cn.amount || 0).toFixed(2)}</td>
                 <td style={ps.tdSub}>{cn.reason || "-"}</td>
               </tr>
             ))}

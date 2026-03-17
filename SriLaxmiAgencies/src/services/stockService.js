@@ -19,3 +19,8 @@ export const getInventorySummary = async () => {
   const res = await api.get("/stock/inventory");
   return res.data;
 };
+
+export const getInventoryBatches = async (productId) => {
+  const res = await api.get(`/stock/inventory/batches/${productId}`);
+  return res.data;
+};

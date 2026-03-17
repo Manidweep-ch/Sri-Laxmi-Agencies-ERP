@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.srilaxmi.erp.dto.StockBatchConsumption;
 import com.srilaxmi.erp.entity.*;
 import com.srilaxmi.erp.repository.*;
 import com.srilaxmi.erp.entity.SalesOrderStatus;
@@ -39,9 +40,9 @@ public class InvoiceGenerationService {
         SalesOrder order = salesOrderRepository.findById(salesOrderId)
                 .orElseThrow(() -> new RuntimeException("Sales Order not found"));
 
-        // Invoice can only be generated after goods are shipped (sent to customer)
-        if (order.getStatus() != SalesOrderStatus.SHIPPED) {
-            throw new IllegalStateException("Invoice can only be generated after goods are sent (SHIPPED). Current status: " + order.getStatus());
+        // Invoice can only be generated after order is CONFIRMED
+        if (order.getStatus() != SalesOrderStatus.CONFIRMED && order.getStatus() != SalesOrderStatus.SHIPPED) {
+            throw new IllegalStateException("Invoice can only be generated for CONFIRMED orders. Current status: " + order.getStatus());
         }
 
         Invoice invoice = new Invoice();
@@ -70,35 +71,41 @@ public class InvoiceGenerationService {
             if (item.getPrice() == null)
                 throw new IllegalStateException("Sales order item has no price");
 
-            InvoiceItem invItem = new InvoiceItem();
-
-            invItem.setInvoice(invoice);
-            invItem.setProduct(item.getProduct());
-            invItem.setQuantity(item.getQuantity());
-            invItem.setUnitPrice(item.getPrice());
-
-            BigDecimal itemSubTotal =
-                    item.getPrice().multiply(new BigDecimal(item.getQuantity()));
-
             double gstRate = (item.getProduct().getGst() > 0) ? item.getProduct().getGst() : 0.0;
-            BigDecimal gstAmount = itemSubTotal.multiply(BigDecimal.valueOf(gstRate / 100.0));
-            BigDecimal itemTotal = itemSubTotal.add(gstAmount);
 
-            invItem.setTotalPrice(itemTotal);
+            // Consume FIFO batches — get one slice per batch with its own SP and COGS
+            List<StockBatchConsumption> splits = stockBatchService.consumeStockWithSplits(
+                    item.getProduct().getId(), item.getQuantity());
 
-            total = total.add(itemTotal);
+            for (StockBatchConsumption split : splits) {
+                InvoiceItem invItem = new InvoiceItem();
+                invItem.setInvoice(invoice);
+                invItem.setProduct(item.getProduct());
+                invItem.setQuantity(split.quantity);
 
-            invoiceItemRepository.save(invItem);
+                // Use SP from the batch; fall back to SO price if SP was not stamped (legacy batches)
+                BigDecimal unitPrice = split.sellingPrice > 0
+                        ? BigDecimal.valueOf(split.sellingPrice)
+                        : item.getPrice();
+                invItem.setUnitPrice(unitPrice);
 
-            // CRITICAL FIX: Stock consumption happens ONLY here during invoice generation
-            // Not during sales order confirmation
-            stockBatchService.consumeStock(
-                    item.getProduct().getId(),
-                    item.getQuantity()
-            );
+                BigDecimal subTotal = unitPrice.multiply(new BigDecimal(split.quantity));
+                BigDecimal gstAmount = subTotal.multiply(BigDecimal.valueOf(gstRate / 100.0));
+                BigDecimal itemTotal = subTotal.add(gstAmount);
+                invItem.setTotalPrice(itemTotal);
+
+                invItem.setCostPrice(BigDecimal.valueOf(split.purchasePrice));
+
+                total = total.add(itemTotal);
+                invoiceItemRepository.save(invItem);
+            }
         }
 
-        invoice.setTotalAmount(total);
+        // Use finalAmount if customer agreed to a round figure, otherwise use calculated total
+        BigDecimal invoiceTotal = (order.getFinalAmount() != null)
+            ? order.getFinalAmount()
+            : total;
+        invoice.setTotalAmount(invoiceTotal);
 
         order.setStatus(SalesOrderStatus.INVOICED);
         salesOrderRepository.save(order);

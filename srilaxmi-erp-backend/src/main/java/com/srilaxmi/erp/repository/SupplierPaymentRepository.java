@@ -10,4 +10,10 @@ public interface SupplierPaymentRepository extends JpaRepository<SupplierPayment
 
     @Query("SELECT COALESCE(SUM(sp.amount), 0) FROM SupplierPayment sp WHERE sp.purchaseOrder.id = :poId")
     java.math.BigDecimal sumByPurchaseOrderId(Long poId);
+
+    @Query("SELECT COALESCE(SUM(sp.amount), 0) FROM SupplierPayment sp WHERE sp.purchaseOrder.supplier.id = :supplierId")
+    java.math.BigDecimal sumBySupplierId(Long supplierId);
+
+    @Query("SELECT sp FROM SupplierPayment sp WHERE sp.purchaseOrder.supplier.id = :supplierId ORDER BY sp.paymentDate DESC")
+    List<SupplierPayment> findBySupplierId(Long supplierId);
 }

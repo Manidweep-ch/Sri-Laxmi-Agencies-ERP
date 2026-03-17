@@ -6,4 +6,5 @@ import com.srilaxmi.erp.entity.PurchaseOrder;
 
 public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Long> {
     List<PurchaseOrder> findByActiveTrue();
+    List<PurchaseOrder> findBySupplierId(Long supplierId);
 }

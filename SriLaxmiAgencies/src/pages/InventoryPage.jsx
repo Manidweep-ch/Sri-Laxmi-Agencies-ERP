@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import MainLayout from "../layout/MainLayout";
-import { getInventorySummary } from "../services/stockService";
+import { getInventorySummary, getInventoryBatches } from "../services/stockService";
 import { usePageStyles } from "../hooks/usePageStyles";
+import { useTheme } from "../context/ThemeContext";
+import { getTheme } from "../theme";
 
 export default function InventoryPage() {
   const [inventory, setInventory] = useState([]);
@@ -9,8 +11,13 @@ export default function InventoryPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [expandedId, setExpandedId] = useState(null);
+  const [batches, setBatches] = useState({});   // productId -> batch array
+  const [batchLoading, setBatchLoading] = useState(null);
   const ps = usePageStyles();
   const { t } = ps;
+  const { dark } = useTheme();
+  const theme = getTheme(dark);
 
   const load = async () => {
     setLoading(true);
@@ -20,6 +27,19 @@ export default function InventoryPage() {
   };
 
   useEffect(() => { load(); }, []);
+
+  const toggleBatches = async (productId) => {
+    if (expandedId === productId) { setExpandedId(null); return; }
+    setExpandedId(productId);
+    if (!batches[productId]) {
+      setBatchLoading(productId);
+      try {
+        const data = await getInventoryBatches(productId);
+        setBatches(prev => ({ ...prev, [productId]: data }));
+      } catch { setBatches(prev => ({ ...prev, [productId]: [] })); }
+      finally { setBatchLoading(null); }
+    }
+  };
 
   const filtered = inventory.filter(i => {
     const q = i.productName?.toLowerCase().includes(search.toLowerCase());
@@ -51,7 +71,7 @@ export default function InventoryPage() {
           <div>
             <h2 style={ps.pageTitle}>Inventory</h2>
             <div style={{ fontSize: "12px", color: t.textMuted, marginTop: "2px" }}>
-              Stock levels across all products
+              Stock levels across all products — click a row to see batch-wise cost breakdown
             </div>
           </div>
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
@@ -66,11 +86,7 @@ export default function InventoryPage() {
         {/* Stat cards */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "14px", marginBottom: "20px" }}>
           {stats.map((c, i) => (
-            <div key={i} className="erp-stat-card erp-card" style={{
-              ...ps.card,
-              borderTop: `3px solid ${c.color}`,
-              position: "relative", overflow: "hidden",
-            }}>
+            <div key={i} className="erp-stat-card erp-card" style={{ ...ps.card, borderTop: `3px solid ${c.color}`, position: "relative", overflow: "hidden" }}>
               <div style={{ position: "absolute", top: "-8px", right: "-8px", fontSize: "36px", opacity: 0.08 }}>{c.icon}</div>
               <div style={{ fontSize: "20px", marginBottom: "6px" }}>{c.icon}</div>
               <div style={ps.cardLabel}>{c.label}</div>
@@ -93,17 +109,18 @@ export default function InventoryPage() {
           <table style={ps.table}>
             <thead>
               <tr style={ps.thead}>
+                <th style={ps.th}></th>
                 <th style={ps.th}>#</th>
                 <th style={ps.th}>Product</th>
                 <th style={ps.th}>Stock Level</th>
                 <th style={ps.th}>Available Qty</th>
-                <th style={ps.th}>Stock Value</th>
+                <th style={ps.th}>Stock Value (at cost)</th>
                 <th style={ps.th}>Status</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && !loading && (
-                <tr><td colSpan={6} style={{ ...ps.td, textAlign: "center", color: t.textMuted, padding: "40px" }}>
+                <tr><td colSpan={7} style={{ ...ps.td, textAlign: "center", color: t.textMuted, padding: "40px" }}>
                   No inventory data found
                 </td></tr>
               )}
@@ -113,27 +130,88 @@ export default function InventoryPage() {
                 const statusColor = isOut ? t.danger : isLow ? t.warning : t.success;
                 const statusLabel = isOut ? "Out of Stock" : isLow ? "Low Stock" : "In Stock";
                 const barPct = Math.min((item.quantity / maxQty) * 100, 100);
+                const isExpanded = expandedId === item.productId;
+                const productBatches = batches[item.productId] || [];
+
                 return (
-                  <tr key={idx} className="erp-tr" style={{ ...ps.tr, background: t.surface }}>
-                    <td style={ps.tdSub}>{idx + 1}</td>
-                    <td style={{ ...ps.td, fontWeight: 600 }}>{item.productName}</td>
-                    <td style={{ ...ps.td, minWidth: "140px" }}>
-                      <div style={{ height: "6px", background: t.surfaceAlt, borderRadius: "3px", overflow: "hidden" }}>
-                        <div style={{
-                          height: "100%", width: `${barPct}%`,
-                          background: `linear-gradient(90deg, ${statusColor}, ${statusColor}bb)`,
-                          borderRadius: "3px", transition: "width 0.6s ease",
-                        }} />
-                      </div>
-                    </td>
-                    <td style={{ ...ps.td, fontWeight: 700, color: statusColor, fontSize: "15px" }}>{item.quantity}</td>
-                    <td style={ps.td}>Rs.{parseFloat(item.totalValue || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                    <td style={ps.td}>
-                      <span className={isOut ? "erp-badge-danger" : ""} style={{ ...ps.badge, background: statusColor + "20", color: statusColor, border: `1px solid ${statusColor}40` }}>
-                        {statusLabel}
-                      </span>
-                    </td>
-                  </tr>
+                  <Fragment key={item.productId}>
+                    <tr style={{ ...ps.tr, background: isExpanded ? theme.surfaceAlt : t.surface, cursor: "pointer", borderLeft: isExpanded ? `3px solid ${t.primary}` : "3px solid transparent" }}
+                      onClick={() => toggleBatches(item.productId)}>
+                      <td style={{ ...ps.td, width: "28px", textAlign: "center", color: t.textMuted, fontSize: "11px" }}>
+                        {isExpanded ? "▲" : "▼"}
+                      </td>
+                      <td style={ps.tdSub}>{idx + 1}</td>
+                      <td style={{ ...ps.td, fontWeight: 600 }}>{item.productName}</td>
+                      <td style={{ ...ps.td, minWidth: "140px" }}>
+                        <div style={{ height: "6px", background: t.surfaceAlt, borderRadius: "3px", overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${barPct}%`, background: `linear-gradient(90deg, ${statusColor}, ${statusColor}bb)`, borderRadius: "3px", transition: "width 0.6s ease" }} />
+                        </div>
+                      </td>
+                      <td style={{ ...ps.td, fontWeight: 700, color: statusColor, fontSize: "15px" }}>{item.quantity}</td>
+                      <td style={ps.td}>₹{parseFloat(item.totalValue || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                      <td style={ps.td}>
+                        <span style={{ ...ps.badge, background: statusColor + "20", color: statusColor, border: `1px solid ${statusColor}40` }}>
+                          {statusLabel}
+                        </span>
+                      </td>
+                    </tr>
+
+                    {/* Batch detail rows */}
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={7} style={{ padding: "0 16px 12px", background: theme.surfaceAlt }}>
+                          {batchLoading === item.productId ? (
+                            <div style={{ padding: "12px", color: t.textMuted, fontSize: "13px" }}>Loading batches...</div>
+                          ) : productBatches.length === 0 ? (
+                            <div style={{ padding: "12px", color: t.textMuted, fontSize: "13px" }}>No active batches found.</div>
+                          ) : (
+                            <div style={{ padding: "10px 0" }}>
+                              <div style={{ fontSize: "12px", fontWeight: 700, color: t.textSub, marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                                FIFO Batch Breakdown
+                              </div>
+                              <table style={{ ...ps.table, marginBottom: 0 }}>
+                                <thead>
+                                  <tr style={ps.thead}>
+                                    <th style={ps.th}>Batch #</th>
+                                    <th style={ps.th}>Received Date</th>
+                                    <th style={ps.th}>Qty in Batch</th>
+                                    <th style={ps.th}>Cost Price (₹)</th>
+                                    <th style={ps.th}>Batch Value (₹)</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {productBatches.map((batch, bi) => {
+                                    const batchValue = (batch.quantity || 0) * (batch.purchasePrice || 0);
+                                    return (
+                                      <tr key={batch.id} style={{ ...ps.tr, background: bi === 0 ? (dark ? "#1a2e1a" : "#f0fdf4") : t.surface }}>
+                                        <td style={{ ...ps.td, color: t.textSub, fontSize: "12px" }}>
+                                          {bi === 0 && <span style={{ fontSize: "10px", background: "#16a34a", color: "white", borderRadius: "3px", padding: "1px 5px", marginRight: "6px" }}>NEXT</span>}
+                                          #{batch.id}
+                                        </td>
+                                        <td style={ps.td}>{batch.receivedDate}</td>
+                                        <td style={{ ...ps.td, fontWeight: 600 }}>{batch.quantity}</td>
+                                        <td style={{ ...ps.td, color: t.primary, fontWeight: 600 }}>₹{parseFloat(batch.purchasePrice || 0).toFixed(2)}</td>
+                                        <td style={{ ...ps.td, fontWeight: 600 }}>₹{batchValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                  {/* Batch total */}
+                                  <tr style={{ background: theme.surfaceAlt }}>
+                                    <td colSpan={2} style={{ ...ps.td, fontWeight: 700, textAlign: "right" }}>Total</td>
+                                    <td style={{ ...ps.td, fontWeight: 700 }}>{productBatches.reduce((s, b) => s + (b.quantity || 0), 0)}</td>
+                                    <td style={ps.td}></td>
+                                    <td style={{ ...ps.td, fontWeight: 700, color: t.primary }}>
+                                      ₹{productBatches.reduce((s, b) => s + (b.quantity || 0) * (b.purchasePrice || 0), 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                                    </td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -143,3 +221,5 @@ export default function InventoryPage() {
     </MainLayout>
   );
 }
+
+

@@ -6,4 +6,5 @@ import com.srilaxmi.erp.entity.SalesOrder;
 
 public interface SalesOrderRepository extends JpaRepository<SalesOrder, Long> {
     List<SalesOrder> findByActiveTrue();
+    List<SalesOrder> findByCustomerIdAndActiveTrue(Long customerId);
 }

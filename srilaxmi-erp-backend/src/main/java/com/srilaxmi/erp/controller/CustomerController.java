@@ -1,6 +1,7 @@
 package com.srilaxmi.erp.controller;
 
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +24,16 @@ public class CustomerController {
     @GetMapping
     public List<Customer> getCustomers() {
         return customerService.getCustomers();
+    }
+
+    @GetMapping("/{id}")
+    public Customer getCustomerById(@PathVariable Long id) {
+        return customerService.getCustomerById(id);
+    }
+
+    @GetMapping("/{id}/summary")
+    public Map<String, Object> getCustomerSummary(@PathVariable Long id) {
+        return customerService.getCustomerSummary(id);
     }
 
     @PutMapping("/{id}")

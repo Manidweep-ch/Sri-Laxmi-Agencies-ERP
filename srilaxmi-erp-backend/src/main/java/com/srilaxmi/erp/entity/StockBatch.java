@@ -15,6 +15,8 @@ public class StockBatch {
 
     private double purchasePrice;
 
+    private double sellingPrice; // SP at time of GRN — used for FIFO-split billing
+
     private LocalDate receivedDate;
 
     private boolean active = true;
@@ -43,6 +45,14 @@ public class StockBatch {
 
     public void setPurchasePrice(double purchasePrice) {
         this.purchasePrice = purchasePrice;
+    }
+
+    public double getSellingPrice() {
+        return sellingPrice;
+    }
+
+    public void setSellingPrice(double sellingPrice) {
+        this.sellingPrice = sellingPrice;
     }
 
     public LocalDate getReceivedDate() {

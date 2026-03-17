@@ -15,3 +15,4 @@ export const getGRNsForPO = async (id) => (await api.get(`/purchase-orders/${id}
 export const getSupplierPayments = async (poId) => (await api.get(`/purchase-orders/${poId}/payments`)).data;
 export const recordSupplierPayment = async (poId, payment) => (await api.post(`/purchase-orders/${poId}/payments`, payment)).data;
 export const getSupplierTotalPaid = async (poId) => (await api.get(`/purchase-orders/${poId}/payments/total-paid`)).data;
+export const getPaymentSummary = async (poId) => (await api.get(`/purchase-orders/${poId}/payment-summary`)).data;

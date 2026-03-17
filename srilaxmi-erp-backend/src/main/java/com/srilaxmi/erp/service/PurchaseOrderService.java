@@ -26,6 +26,7 @@ public class PurchaseOrderService {
     @Autowired private ProductRepository productRepository;
     @Autowired private SupplierRepository supplierRepository;
     @Autowired private com.srilaxmi.erp.repository.SupplierPaymentRepository supplierPaymentRepository;
+    @Autowired private com.srilaxmi.erp.repository.GoodsReceiptRepository goodsReceiptRepository;
 
     @Transactional
     public PurchaseOrder createPO(PurchaseOrder po) {
@@ -39,7 +40,7 @@ public class PurchaseOrderService {
             po.setSupplier(supplier);
         }
 
-        po.setPoNumber("PO-" + System.currentTimeMillis());
+        po.setPoNumber(generatePoNumber());
         po.setOrderDate(LocalDate.now());
         po.setStatus(PurchaseOrderStatus.DRAFT);
 
@@ -138,11 +139,24 @@ public class PurchaseOrderService {
     public List<PurchaseOrder> getAllPO() {
         List<PurchaseOrder> list = purchaseOrderRepository.findByActiveTrue();
         for (PurchaseOrder po : list) {
-            po.setAmountPaid(supplierPaymentRepository.sumByPurchaseOrderId(po.getId()));
+            BigDecimal paid = supplierPaymentRepository.sumByPurchaseOrderId(po.getId());
+            po.setAmountPaid(paid);
+
+            // toBePaid = receivedValue - paid (if goods received), else full PO total
+            boolean hasReceivedGoods = po.getStatus() == PurchaseOrderStatus.PARTIALLY_RECEIVED
+                    || po.getStatus() == PurchaseOrderStatus.FULLY_RECEIVED;
+
+            if (hasReceivedGoods) {
+                BigDecimal receivedValue = getReceivedValue(po.getId());
+                BigDecimal balance = receivedValue.subtract(paid);
+                po.setToBePaid(balance.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : balance);
+            } else {
+                BigDecimal total = po.getTotalAmount() != null ? po.getTotalAmount() : BigDecimal.ZERO;
+                po.setToBePaid(total.subtract(paid).compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : total.subtract(paid));
+            }
         }
         return list;
     }
-
     public PurchaseOrder getPOById(Long id) {
         if (id == null) throw new IllegalArgumentException("ID cannot be null");
         return purchaseOrderRepository.findById(id)
@@ -171,7 +185,37 @@ public class PurchaseOrderService {
         if (po.getStatus() == PurchaseOrderStatus.CANCELLED || po.getStatus() == PurchaseOrderStatus.FULLY_RECEIVED) {
             throw new IllegalStateException("Cannot change status of a cancelled or fully received order.");
         }
+        if (newStatus == PurchaseOrderStatus.CANCELLED) {
+            List<com.srilaxmi.erp.entity.GoodsReceipt> grns = goodsReceiptRepository.findByPurchaseOrderId(id);
+            if (grns != null && !grns.isEmpty()) {
+                throw new IllegalStateException("Cannot cancel a PO that has GRN entries recorded.");
+            }
+        }
         po.setStatus(newStatus);
         return purchaseOrderRepository.save(po);
+    }
+
+    private String generatePoNumber() {
+        int year = LocalDate.now().getYear();
+        long count = purchaseOrderRepository.count() + 1;
+        return String.format("PO-%d-%04d", year, count);
+    }
+
+    /**
+     * Calculates the total value of goods actually received for a PO,
+     * based on receivedQuantity * price per PO item.
+     */
+    public java.math.BigDecimal getReceivedValue(Long poId) {
+        List<PurchaseOrderItem> items = purchaseOrderItemRepository.findByPurchaseOrderId(poId);
+        java.math.BigDecimal total = java.math.BigDecimal.ZERO;
+        for (PurchaseOrderItem item : items) {
+            if (item.getPrice() == null) continue;
+            java.math.BigDecimal lineVal = item.getPrice().multiply(new java.math.BigDecimal(item.getReceivedQuantity()));
+            // Add GST on received value
+            double gst = item.getProduct() != null ? item.getProduct().getGst() : 0.0;
+            java.math.BigDecimal tax = lineVal.multiply(java.math.BigDecimal.valueOf(gst / 100.0));
+            total = total.add(lineVal).add(tax);
+        }
+        return total;
     }
 }

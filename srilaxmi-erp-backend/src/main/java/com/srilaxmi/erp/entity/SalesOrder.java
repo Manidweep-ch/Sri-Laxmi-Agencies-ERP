@@ -33,7 +33,11 @@ public class SalesOrder {
 
     private BigDecimal tax;
 
+    // Calculated from items — never overwritten
     private BigDecimal totalAmount;
+
+    // Customer-agreed final price (round figure). Null means use totalAmount.
+    private BigDecimal finalAmount;
 
     private boolean active = true;
 
@@ -113,5 +117,18 @@ public class SalesOrder {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    public BigDecimal getFinalAmount() {
+        return finalAmount;
+    }
+
+    public void setFinalAmount(BigDecimal finalAmount) {
+        this.finalAmount = finalAmount;
+    }
+
+    /** Returns finalAmount if set, otherwise totalAmount. Use this for invoicing/payment. */
+    public BigDecimal getEffectiveAmount() {
+        return (finalAmount != null) ? finalAmount : totalAmount;
     }
 }

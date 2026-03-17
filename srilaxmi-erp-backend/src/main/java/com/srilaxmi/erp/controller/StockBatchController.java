@@ -47,6 +47,11 @@ public class StockBatchController {
     public List<InventoryResponse> getInventory() {
         return stockBatchService.getInventorySummary();
     }
+
+    @GetMapping("/inventory/batches/{productId}")
+    public List<StockBatch> getBatchDetail(@PathVariable Long productId) {
+        return stockBatchService.getBatchDetail(productId);
+    }
     
     @PostMapping("/consume")
     public String consumeStock(@RequestBody ConsumeRequest request) {

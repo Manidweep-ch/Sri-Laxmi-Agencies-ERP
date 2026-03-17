@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, Fragment } from "react";
 import MainLayout from "../layout/MainLayout";
-import { getSalesReturns, createSalesReturn, getSalesReturnItems, getRefundsByReturn, getTotalRefunded, recordRefund } from "../services/salesReturnService";
+import { getSalesReturns, createSalesReturn, getSalesReturnItems, getRefundsByReturn, getTotalRefunded } from "../services/salesReturnService";
 import { getInvoiceSummaries, getInvoiceItems } from "../services/invoiceService";
 import { usePageStyles } from "../hooks/usePageStyles";
 import { useTheme } from "../context/ThemeContext";
@@ -61,8 +61,6 @@ function SalesReturnsPage() {
   const [expandedItems, setExpandedItems] = useState({});
   const [expandedTab, setExpandedTab] = useState({});
   const [refundData, setRefundData] = useState({}); // { [returnId]: { refunds, totalRefunded } }
-  const [refundForm, setRefundForm] = useState({}); // { [returnId]: { amount, date, method, notes } }
-  const [refundLoading, setRefundLoading] = useState(false);
 
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [invoiceSearch, setInvoiceSearch] = useState("");
@@ -158,23 +156,6 @@ function SalesReturnsPage() {
       } catch { setExpandedItems(prev => ({ ...prev, [id]: [] })); }
     }
     if (!refundData[id]) await loadRefunds(id);
-  };
-
-  const handleRecordRefund = async (r) => {
-    const form = refundForm[r.id] || {};
-    if (!form.amount || parseFloat(form.amount) <= 0) { setError("Enter a valid refund amount"); return; }
-    try {
-      setRefundLoading(true); setError("");
-      await recordRefund(r.id, {
-        amount: parseFloat(form.amount),
-        refundDate: form.date || new Date().toISOString().split("T")[0],
-        paymentMethod: form.method || "CASH",
-        notes: form.notes || ""
-      });
-      setRefundForm(prev => ({ ...prev, [r.id]: {} }));
-      await loadRefunds(r.id);
-    } catch (e) { setError(e.response?.data?.message || "Failed to record refund"); }
-    finally { setRefundLoading(false); }
   };
 
   return (
@@ -357,9 +338,9 @@ function SalesReturnsPage() {
                               {(expandedItems[r.id] || []).map(item => (
                                 <tr key={item.id} style={s.tr}>
                                   <td style={s.td}>{item.product?.name}{item.product?.size ? ` - ${item.product.size}` : ""}</td>
-                                  <td style={s.td}>₹{parseFloat(item.unitPrice || 0).toFixed(2)}</td>
+                                  <td style={s.td}>Rs.{parseFloat(item.unitPrice || 0).toFixed(2)}</td>
                                   <td style={s.td}>{item.quantity}</td>
-                                  <td style={{ ...s.td, color: "#ef4444", fontWeight: 600 }}>₹{parseFloat(item.totalAmount || 0).toFixed(2)}</td>
+                                  <td style={{ ...s.td, color: "#ef4444", fontWeight: 600 }}>Rs.{parseFloat(item.totalAmount || 0).toFixed(2)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -372,49 +353,16 @@ function SalesReturnsPage() {
                           const totalAmt = parseFloat(r.totalAmount || 0);
                           const refunded = rd.totalRefunded || 0;
                           const pending = Math.max(0, totalAmt - refunded);
-                          const form = refundForm[r.id] || {};
                           return (
                             <>
                               {pending > 0 && (
-                                <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "14px", marginBottom: "14px" }}>
-                                  <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "10px", color: t.text }}>
-                                    Record Refund to Customer — Pending: ₹{pending.toFixed(2)}
-                                  </div>
-                                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
-                                    <div style={{ flex: "1 1 100px" }}>
-                                      <label style={s.label}>Amount (₹)</label>
-                                      <input style={s.input} type="number" max={pending}
-                                        value={form.amount || ""}
-                                        onChange={e => setRefundForm(prev => ({ ...prev, [r.id]: { ...form, amount: e.target.value } }))} />
-                                    </div>
-                                    <div style={{ flex: "1 1 130px" }}>
-                                      <label style={s.label}>Date</label>
-                                      <input style={s.input} type="date"
-                                        value={form.date || new Date().toISOString().split("T")[0]}
-                                        onChange={e => setRefundForm(prev => ({ ...prev, [r.id]: { ...form, date: e.target.value } }))} />
-                                    </div>
-                                    <div style={{ flex: "1 1 120px" }}>
-                                      <label style={s.label}>Method</label>
-                                      <select style={s.input} value={form.method || "CASH"}
-                                        onChange={e => setRefundForm(prev => ({ ...prev, [r.id]: { ...form, method: e.target.value } }))}>
-                                        {["CASH","UPI","BANK_TRANSFER","CHEQUE","NEFT","RTGS"].map(m => <option key={m} value={m}>{m.replace("_"," ")}</option>)}
-                                      </select>
-                                    </div>
-                                    <div style={{ flex: "2 1 150px" }}>
-                                      <label style={s.label}>Notes</label>
-                                      <input style={s.input} placeholder="optional"
-                                        value={form.notes || ""}
-                                        onChange={e => setRefundForm(prev => ({ ...prev, [r.id]: { ...form, notes: e.target.value } }))} />
-                                    </div>
-                                    <button style={s.btnGreen} onClick={() => handleRecordRefund(r)} disabled={refundLoading}>
-                                      Pay Refund
-                                    </button>
-                                  </div>
+                                <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: "6px", padding: "10px 14px", marginBottom: "12px", fontSize: "13px", color: "#92400e" }}>
+                                  Rs.{pending.toFixed(2)} pending refund — go to Finance &gt; Payments &gt; Refunds tab to pay.
                                 </div>
                               )}
                               {pending === 0 && (
                                 <div style={{ background: t.successBg, border: `1px solid ${t.successBorder}`, borderRadius: "6px", padding: "10px 14px", marginBottom: "12px", fontSize: "13px", color: t.success }}>
-                                  ✓ Full refund of ₹{totalAmt.toFixed(2)} has been paid to customer.
+                                  Full refund of Rs.{totalAmt.toFixed(2)} has been paid to customer.
                                 </div>
                               )}
                               <table style={s.table}>
@@ -430,7 +378,7 @@ function SalesReturnsPage() {
                                     <tr key={rf.id} style={s.tr}>
                                       <td style={s.td}>{i + 1}</td>
                                       <td style={s.td}>{fmt(rf.refundDate)}</td>
-                                      <td style={{ ...s.td, color: "#ef4444", fontWeight: 600 }}>₹{parseFloat(rf.amount).toFixed(2)}</td>
+                                      <td style={{ ...s.td, color: "#ef4444", fontWeight: 600 }}>Rs.{parseFloat(rf.amount).toFixed(2)}</td>
                                       <td style={s.td}>{rf.paymentMethod?.replace("_"," ")}</td>
                                       <td style={s.td}>{rf.notes || "-"}</td>
                                     </tr>

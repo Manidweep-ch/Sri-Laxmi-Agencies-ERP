@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import MainLayout from "../layout/MainLayout";
 import api from "../api/axiosConfig";
 import { usePageStyles } from "../hooks/usePageStyles";
@@ -107,6 +107,7 @@ export default function ReportsPage() {
   const [inventory, setInventory] = useState(null);
   const [sales, setSales] = useState(null);
   const [purchase, setPurchase] = useState(null);
+  const [profitMargin, setProfitMargin] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -119,25 +120,26 @@ export default function ReportsPage() {
     setLoading(true); setError("");
     try {
       const params = startDate && endDate ? `?startDate=${startDate}&endDate=${endDate}` : "";
-      const [f, inv, s, p] = await Promise.all([
+      const [f, inv, s, p, pm] = await Promise.all([
         api.get("/reports/financial").then(r => r.data),
         api.get("/reports/inventory").then(r => r.data),
         api.get(`/reports/sales${params}`).then(r => r.data),
         api.get(`/reports/purchase${params}`).then(r => r.data),
+        api.get("/reports/profit-margin").then(r => r.data),
       ]);
-      setFinancial(f); setInventory(inv); setSales(s); setPurchase(p);
+      setFinancial(f); setInventory(inv); setSales(s); setPurchase(p); setProfitMargin(pm);
     } catch { setError("Failed to load reports"); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { loadAll(); }, []);
 
-  const fmt = v => `₹${parseFloat(v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  const fmt = v => `Rs.${parseFloat(v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
   const fmtShort = v => {
     const n = parseFloat(v || 0);
-    if (n >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
-    if (n >= 1000) return `₹${(n / 1000).toFixed(1)}K`;
-    return `₹${n.toFixed(0)}`;
+    if (n >= 100000) return `Rs.${(n / 100000).toFixed(1)}L`;
+    if (n >= 1000) return `Rs.${(n / 1000).toFixed(1)}K`;
+    return `Rs.${n.toFixed(0)}`;
   };
 
   const tabStyle = (key) => ({
@@ -165,7 +167,7 @@ export default function ReportsPage() {
       {loading && <div style={ps.alertInfo}>Loading reports...</div>}
 
       <div style={{ display: "flex", gap: "2px", marginBottom: "24px", borderBottom: `2px solid ${t.border}` }}>
-        {[["financial","💰 Financial"],["sales","📈 Sales"],["purchase","🛒 Purchase"],["inventory","📦 Inventory"]].map(([key, label]) => (
+        {[["financial","💰 Financial"],["sales","📈 Sales"],["purchase","🛒 Purchase"],["inventory","📦 Inventory"],["profit","📊 Profit Margin"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} style={tabStyle(key)}>{label}</button>
         ))}
       </div>
@@ -244,7 +246,23 @@ export default function ReportsPage() {
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "14px", marginBottom: "28px" }}>
             <StatCard label="Purchase Orders" value={purchase.totalPurchaseOrders} color={t.primary} icon="🛒" />
+            <StatCard label="Total PO Value" value={fmtShort(purchase.totalPOValue)} color={t.warning} icon="💰" sub={fmt(purchase.totalPOValue)} />
+            <StatCard label="Total Paid" value={fmtShort(purchase.totalPaid)} color={t.success} icon="✅" sub={fmt(purchase.totalPaid)} />
+            <StatCard label="Outstanding" value={fmtShort(purchase.totalOutstanding)} color={t.danger} icon="⏳" sub={fmt(purchase.totalOutstanding)} />
           </div>
+          {purchase.totalPOValue > 0 && (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "12px", padding: "20px", marginBottom: "16px" }}>
+              <div style={{ fontSize: "13px", fontWeight: 700, color: t.text, marginBottom: "16px" }}>💳 Payment Progress</div>
+              {[
+                { label: "Total PO Value", value: parseFloat(purchase.totalPOValue || 0), color: t.warning },
+                { label: "Paid to Suppliers", value: parseFloat(purchase.totalPaid || 0), color: t.success },
+                { label: "Outstanding", value: parseFloat(purchase.totalOutstanding || 0), color: t.danger },
+              ].map(item => (
+                <HBar key={item.label} label={item.label} value={item.value}
+                  max={parseFloat(purchase.totalPOValue || 1)} color={item.color} fmt={fmtShort} />
+              ))}
+            </div>
+          )}
           {purchase.statusBreakdown && Object.keys(purchase.statusBreakdown).length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
               <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "12px", padding: "20px" }}>
@@ -327,6 +345,90 @@ export default function ReportsPage() {
                 </tbody>
               </table>
             </div>
+          )}
+        </div>
+      )}
+      {/* PROFIT MARGIN */}
+      {tab === "profit" && (
+        <div>
+          {profitMargin.length === 0 ? (
+            <div style={{ ...ps.alertInfo, textAlign: "center" }}>
+              No profit data yet — profit margin is calculated from FIFO invoices. Generate invoices to see data here.
+            </div>
+          ) : (
+            <>
+              {/* Summary cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "14px", marginBottom: "28px" }}>
+                <StatCard
+                  label="Total Revenue"
+                  value={fmtShort(profitMargin.reduce((s, r) => s + parseFloat(r.totalRevenue || 0), 0))}
+                  color={t.success} icon="💰"
+                  sub={fmt(profitMargin.reduce((s, r) => s + parseFloat(r.totalRevenue || 0), 0))}
+                />
+                <StatCard
+                  label="Total COGS"
+                  value={fmtShort(profitMargin.reduce((s, r) => s + parseFloat(r.totalCOGS || 0), 0))}
+                  color={t.warning} icon="🏭"
+                  sub={fmt(profitMargin.reduce((s, r) => s + parseFloat(r.totalCOGS || 0), 0))}
+                />
+                <StatCard
+                  label="Gross Profit"
+                  value={fmtShort(profitMargin.reduce((s, r) => s + parseFloat(r.grossProfit || 0), 0))}
+                  color={t.primary} icon="📈"
+                  sub={fmt(profitMargin.reduce((s, r) => s + parseFloat(r.grossProfit || 0), 0))}
+                />
+                <StatCard
+                  label="Avg Margin"
+                  value={(() => {
+                    const totalRev = profitMargin.reduce((s, r) => s + parseFloat(r.totalRevenue || 0), 0);
+                    const totalProfit = profitMargin.reduce((s, r) => s + parseFloat(r.grossProfit || 0), 0);
+                    return totalRev > 0 ? `${((totalProfit / totalRev) * 100).toFixed(1)}%` : "0%";
+                  })()}
+                  color={t.teal} icon="🎯"
+                />
+              </div>
+
+              {/* Per-product table */}
+              <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "12px", padding: "20px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: t.text, marginBottom: "16px" }}>
+                  📦 Profit Margin by Product (FIFO COGS)
+                </div>
+                <table style={ps.table}>
+                  <thead>
+                    <tr style={ps.thead}>
+                      <th style={ps.th}>Product</th>
+                      <th style={ps.th}>Qty Sold</th>
+                      <th style={ps.th}>Revenue</th>
+                      <th style={ps.th}>COGS</th>
+                      <th style={ps.th}>Gross Profit</th>
+                      <th style={ps.th}>Margin %</th>
+                      <th style={ps.th}>Margin Bar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...profitMargin].sort((a, b) => parseFloat(b.marginPct || 0) - parseFloat(a.marginPct || 0)).map(row => {
+                      const margin = parseFloat(row.marginPct || 0);
+                      const marginColor = margin >= 20 ? t.success : margin >= 10 ? t.warning : t.danger;
+                      return (
+                        <tr key={row.productId} style={ps.tr}>
+                          <td style={{ ...ps.td, fontWeight: 600 }}>{row.productName}</td>
+                          <td style={ps.td}>{row.totalQtySold}</td>
+                          <td style={{ ...ps.td, color: t.success, fontWeight: 600 }}>{fmt(row.totalRevenue)}</td>
+                          <td style={{ ...ps.td, color: t.warning }}>{fmt(row.totalCOGS)}</td>
+                          <td style={{ ...ps.td, color: t.primary, fontWeight: 600 }}>{fmt(row.grossProfit)}</td>
+                          <td style={{ ...ps.td, fontWeight: 700, color: marginColor }}>{margin.toFixed(1)}%</td>
+                          <td style={{ ...ps.td, minWidth: "120px" }}>
+                            <div style={{ height: "8px", background: t.surfaceAlt, borderRadius: "4px", overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${Math.min(margin, 100)}%`, background: `linear-gradient(90deg, ${marginColor}, ${marginColor}bb)`, borderRadius: "4px" }} />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       )}

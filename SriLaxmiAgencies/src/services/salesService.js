@@ -9,3 +9,8 @@ export const updateSalesOrderStatus = async (id, status) =>
 export const deleteSalesOrder = async (id) => (await api.delete(`/sales-orders/${id}`)).data;
 export const addSalesOrderItem = async (id, item) => (await api.post(`/sales-orders/${id}/items`, item)).data;
 export const removeSalesOrderItem = async (id, itemId) => (await api.delete(`/sales-orders/${id}/items/${itemId}`)).data;
+export const getSalesOrderSummary = async (id) => (await api.get(`/sales-orders/${id}/summary`)).data;
+export const updateSalesOrderFinalAmount = async (id, finalAmount) =>
+  (await api.put(`/sales-orders/${id}/final-amount`, finalAmount !== null ? finalAmount : "", {
+    headers: { "Content-Type": "application/json" }
+  })).data;

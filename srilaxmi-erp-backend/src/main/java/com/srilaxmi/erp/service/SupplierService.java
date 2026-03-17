@@ -23,6 +23,11 @@ public class SupplierService {
         return supplierRepository.findByActiveTrue();
     }
 
+    public Supplier getSupplierById(Long id) {
+        return supplierRepository.findById(id)
+            .orElseThrow(() -> new RuntimeException("Supplier not found: " + id));
+    }
+
     public Supplier updateSupplier(Long id, Supplier updated) {
         @SuppressWarnings("null")
 		Supplier existing = supplierRepository.findById(id)

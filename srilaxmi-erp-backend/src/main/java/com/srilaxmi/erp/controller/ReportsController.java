@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.srilaxmi.erp.service.*;
 import com.srilaxmi.erp.entity.*;
 import com.srilaxmi.erp.dto.InventoryResponse;
+import com.srilaxmi.erp.repository.InvoiceItemRepository;
 
 @RestController
 @RequestMapping("/api/reports")
@@ -38,6 +39,9 @@ public class ReportsController {
 
     @Autowired
     private ProductService productService;
+
+    @Autowired
+    private InvoiceItemRepository invoiceItemRepository;
 
     @GetMapping("/financial")
     public Map<String, Object> getFinancialReport() {
@@ -163,7 +167,20 @@ public class ReportsController {
         }
         
         report.put("totalPurchaseOrders", purchaseOrders.size());
-        
+
+        // Financial totals
+        double totalPOValue = purchaseOrders.stream()
+            .mapToDouble(po -> po.getTotalAmount() != null ? po.getTotalAmount().doubleValue() : 0.0)
+            .sum();
+        double totalPaid = purchaseOrders.stream()
+            .mapToDouble(po -> po.getAmountPaid() != null ? po.getAmountPaid().doubleValue() : 0.0)
+            .sum();
+        double totalOutstanding = Math.max(0, totalPOValue - totalPaid);
+
+        report.put("totalPOValue", totalPOValue);
+        report.put("totalPaid", totalPaid);
+        report.put("totalOutstanding", totalOutstanding);
+
         // Status breakdown
         Map<String, Long> statusBreakdown = purchaseOrders.stream()
             .collect(java.util.stream.Collectors.groupingBy(
@@ -173,5 +190,39 @@ public class ReportsController {
         report.put("statusBreakdown", statusBreakdown);
         
         return report;
+    }
+
+    /**
+     * Profit margin report per product based on FIFO COGS recorded at invoice generation.
+     * Returns: productId, productName, totalQtySold, totalRevenue, totalCOGS, grossProfit, marginPct
+     */
+    @GetMapping("/profit-margin")
+    public List<Map<String, Object>> getProfitMarginReport() {
+        List<Object[]> rows = invoiceItemRepository.getProfitSummaryByProduct();
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+
+        for (Object[] row : rows) {
+            Long productId = (Long) row[0];
+            String productName = (String) row[1];
+            Long totalQty = (Long) row[2];
+            BigDecimal totalRevenue = (BigDecimal) row[3];
+            BigDecimal totalCOGS = (BigDecimal) row[4];
+            BigDecimal grossProfit = totalRevenue.subtract(totalCOGS);
+            BigDecimal marginPct = totalRevenue.compareTo(BigDecimal.ZERO) != 0
+                    ? grossProfit.divide(totalRevenue, 4, java.math.RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100))
+                    : BigDecimal.ZERO;
+
+            Map<String, Object> entry = new HashMap<>();
+            entry.put("productId", productId);
+            entry.put("productName", productName);
+            entry.put("totalQtySold", totalQty);
+            entry.put("totalRevenue", totalRevenue);
+            entry.put("totalCOGS", totalCOGS);
+            entry.put("grossProfit", grossProfit);
+            entry.put("marginPct", marginPct);
+            result.add(entry);
+        }
+
+        return result;
     }
 }

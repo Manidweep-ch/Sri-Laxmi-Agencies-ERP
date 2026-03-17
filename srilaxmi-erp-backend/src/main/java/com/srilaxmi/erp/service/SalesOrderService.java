@@ -75,6 +75,12 @@ public class SalesOrderService {
         saved.setSubTotal(subTotal);
         saved.setTax(totalTax);
         saved.setTotalAmount(subTotal.add(totalTax));
+
+        // Store finalAmount separately if provided — totalAmount stays as calculated
+        if (order.getFinalAmount() != null && order.getFinalAmount().compareTo(BigDecimal.ZERO) > 0) {
+            saved.setFinalAmount(order.getFinalAmount());
+        }
+
         return salesOrderRepository.save(saved);
     }
 
@@ -103,11 +109,19 @@ public class SalesOrderService {
     }
 
     @Transactional
+    public SalesOrder updateFinalAmount(Long id, BigDecimal finalAmount) {
+        SalesOrder order = salesOrderRepository.findById(id)
+            .orElseThrow(() -> new RuntimeException("Sales Order not found"));
+        order.setFinalAmount(finalAmount);
+        return salesOrderRepository.save(order);
+    }
+
+    @Transactional
     public SalesOrder addItem(Long orderId, SalesOrderItem item) {
         SalesOrder order = salesOrderRepository.findById(orderId)
             .orElseThrow(() -> new RuntimeException("Sales Order not found"));
-        if (order.getStatus() == SalesOrderStatus.INVOICED)
-            throw new IllegalStateException("Cannot modify an invoiced order");
+        if (order.getStatus() == SalesOrderStatus.INVOICED || order.getStatus() == SalesOrderStatus.SHIPPED)
+            throw new IllegalStateException("Cannot modify an invoiced or shipped order");
         Product product = productRepository.findById(item.getProduct().getId())
             .orElseThrow(() -> new RuntimeException("Product not found"));
         item.setProduct(product);
@@ -118,9 +132,11 @@ public class SalesOrderService {
 
     @Transactional
     public SalesOrder removeItem(Long orderId, Long itemId) {
-        salesOrderItemRepository.deleteById(itemId);
         SalesOrder order = salesOrderRepository.findById(orderId)
             .orElseThrow(() -> new RuntimeException("Sales Order not found"));
+        if (order.getStatus() == SalesOrderStatus.INVOICED || order.getStatus() == SalesOrderStatus.SHIPPED)
+            throw new IllegalStateException("Cannot modify an invoiced or shipped order");
+        salesOrderItemRepository.deleteById(itemId);
         return recalculate(order);
     }
 
@@ -149,7 +165,10 @@ public class SalesOrderService {
             .orElseThrow(() -> new RuntimeException("Sales Order not found"));
 
         if (order.getStatus() == SalesOrderStatus.CANCELLED || order.getStatus() == SalesOrderStatus.INVOICED) {
-            throw new IllegalStateException("Cannot change status of a cancelled or invoiced order.");
+            // Allow SHIPPED from INVOICED (goods sent after invoice)
+            if (!(order.getStatus() == SalesOrderStatus.INVOICED && newStatus == SalesOrderStatus.SHIPPED)) {
+                throw new IllegalStateException("Cannot change status of a cancelled or fully invoiced order.");
+            }
         }
 
         // When confirming, check stock availability as a pre-check
@@ -166,9 +185,9 @@ public class SalesOrderService {
             }
         }
 
-        // SHIPPED means goods have been sent to customer — allowed from CONFIRMED
-        if (newStatus == SalesOrderStatus.SHIPPED && order.getStatus() != SalesOrderStatus.CONFIRMED) {
-            throw new IllegalStateException("Order must be CONFIRMED before marking goods as sent.");
+        // SHIPPED means goods have been sent — allowed from INVOICED only
+        if (newStatus == SalesOrderStatus.SHIPPED && order.getStatus() != SalesOrderStatus.INVOICED) {
+            throw new IllegalStateException("Goods can only be marked as sent after invoice is generated.");
         }
 
         order.setStatus(newStatus);

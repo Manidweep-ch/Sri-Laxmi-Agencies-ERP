@@ -1,9 +1,11 @@
-import { useEffect, useState, useRef, Fragment } from "react";
+﻿import { useEffect, useState, useRef, Fragment } from "react";
 import MainLayout from "../layout/MainLayout";
-import { getPurchaseOrders, createPurchaseOrder, getPurchaseOrderItems, addPurchaseOrderItem,
-  updatePurchaseOrderItem, removePurchaseOrderItem, updatePurchaseOrderStatus,
-  receiveStockForPO, getGRNsForPO, getSupplierPayments, recordSupplierPayment,
-  getSupplierTotalPaid } from "../services/purchaseService";
+import {
+  getPurchaseOrders, createPurchaseOrder, getPurchaseOrderItems,
+  addPurchaseOrderItem, updatePurchaseOrderItem, removePurchaseOrderItem,
+  updatePurchaseOrderStatus, receiveStockForPO, getGRNsForPO,
+  recordSupplierPayment, getPaymentSummary
+} from "../services/purchaseService";
 import { getSuppliers } from "../services/supplierService";
 import { getProducts } from "../services/productService";
 import { usePageStyles } from "../hooks/usePageStyles";
@@ -11,15 +13,39 @@ import { getCurrentPrice } from "../services/priceService";
 import { useTheme } from "../context/ThemeContext";
 import { getTheme } from "../theme";
 
-const STATUS_LABELS = {
-  DRAFT: "Draft", APPROVED: "Approved", SENT_TO_SUPPLIER: "Sent",
-  PARTIALLY_RECEIVED: "Partial GRN", FULLY_RECEIVED: "Fully Received", CANCELLED: "Cancelled"
-};
 const STATUS_COLORS = {
-  DRAFT: "#6b7280", APPROVED: "#2563eb", SENT_TO_SUPPLIER: "#7c3aed",
+  DRAFT: "#6b7280", APPROVED: "#2563eb",
   PARTIALLY_RECEIVED: "#f59e0b", FULLY_RECEIVED: "#16a34a", CANCELLED: "#ef4444"
 };
+const STATUS_LABELS = {
+  DRAFT: "Draft", APPROVED: "Approved",
+  PARTIALLY_RECEIVED: "Partial", FULLY_RECEIVED: "Fully Received", CANCELLED: "Cancelled"
+};
+const GRN_STATUS_LABELS = {
+  DRAFT: "Not Yet Received", APPROVED: "Not Yet Received",
+  PARTIALLY_RECEIVED: "Partially Received", FULLY_RECEIVED: "Fully Received", CANCELLED: "-"
+};
+const GRN_STATUS_COLORS = {
+  DRAFT: "#6b7280", APPROVED: "#6b7280",
+  PARTIALLY_RECEIVED: "#f59e0b", FULLY_RECEIVED: "#16a34a", CANCELLED: "#9ca3af"
+};
 
+// ── Shared back-button header ─────────────────────────────────────────────────
+function PageHeader({ title, subtitle, onBack, t }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
+      <button onClick={onBack} style={{ padding: "7px 14px", border: `1px solid ${t.border}`, borderRadius: "6px", background: t.surface, color: t.text, cursor: "pointer", fontSize: "13px" }}>
+        ← Back
+      </button>
+      <div>
+        <h2 style={{ margin: 0, fontSize: "18px", color: t.text }}>{title}</h2>
+        {subtitle && <div style={{ fontSize: "12px", color: t.textSub, marginTop: "2px" }}>{subtitle}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── Search dropdown ───────────────────────────────────────────────────────────
 function SearchDropdown({ placeholder, items, labelFn, onSelect, value, onChange }) {
   const [open, setOpen] = useState(false);
   const ref = useRef();
@@ -31,20 +57,16 @@ function SearchDropdown({ placeholder, items, labelFn, onSelect, value, onChange
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
-  const sd = {
-    input: { width: "100%", padding: "8px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "14px", boxSizing: "border-box", background: t.inputBg, color: t.text },
-    dropdown: { position: "absolute", top: "100%", left: 0, right: 0, background: t.surface, border: `1px solid ${t.border}`, borderRadius: "6px", zIndex: 100, maxHeight: "200px", overflowY: "auto", boxShadow: t.shadowMd },
-    option: { padding: "8px 12px", cursor: "pointer", fontSize: "14px", color: t.text, borderBottom: `1px solid ${t.border}` },
-  };
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <input style={sd.input} placeholder={placeholder} value={value}
+      <input style={{ width: "100%", padding: "8px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "14px", boxSizing: "border-box", background: t.inputBg, color: t.text }}
+        placeholder={placeholder} value={value}
         onChange={e => { onChange(e.target.value); onSelect(null); setOpen(true); }}
         onFocus={() => setOpen(true)} />
       {open && filtered.length > 0 && (
-        <div style={sd.dropdown}>
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: t.surface, border: `1px solid ${t.border}`, borderRadius: "6px", zIndex: 100, maxHeight: "200px", overflowY: "auto", boxShadow: t.shadowMd }}>
           {filtered.map(item => (
-            <div key={item.id} style={sd.option}
+            <div key={item.id} style={{ padding: "8px 12px", cursor: "pointer", fontSize: "14px", color: t.text, borderBottom: `1px solid ${t.border}` }}
               onMouseDown={() => { onSelect(item); onChange(labelFn(item)); setOpen(false); }}>
               {labelFn(item)}
             </div>
@@ -55,478 +77,37 @@ function SearchDropdown({ placeholder, items, labelFn, onSelect, value, onChange
   );
 }
 
-function ExpandedPORow({ po, products, onRefresh, onClose }) {
-  const [tab, setTab] = useState("items");
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+// ── New PO Page ───────────────────────────────────────────────────────────────
+function NewPOPage({ suppliers, products, onBack, onCreated }) {
+  const ps = usePageStyles();
   const { dark } = useTheme();
   const t = getTheme(dark);
-  const ps = usePageStyles();
-  const s = {
-    label: ps.label, input: ps.input,
-    table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td,
-    btnGreen: ps.btnSuccess, btnSmGreen: ps.btnSmSuccess, btnSmRed: ps.btnSmDanger,
-    card: ps.card, cardLabel: ps.cardLabel, cardValue: ps.cardValue,
-    totalRow: ps.totalRow,
-  };
+  const s = { label: ps.label, input: ps.input, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td, totalRow: ps.totalRow };
 
-  // Items tab
-  const [newItemProduct, setNewItemProduct] = useState(null);
-  const [newItemProductSearch, setNewItemProductSearch] = useState("");
-  const [newItemPrice, setNewItemPrice] = useState("");
-  const [newItemQty, setNewItemQty] = useState(1);
-  const [editingItemId, setEditingItemId] = useState(null);
-  const [editItemPrice, setEditItemPrice] = useState("");
-  const [editItemQty, setEditItemQty] = useState("");
-
-  // Receive tab
-  const [receiveLines, setReceiveLines] = useState([]);
-  const [receiveInvoice, setReceiveInvoice] = useState("");
-  const [receiveDate, setReceiveDate] = useState(new Date().toISOString().split("T")[0]);
-
-  // GRN tab
-  const [grns, setGrns] = useState([]);
-
-  // Payments tab
-  const [payments, setPayments] = useState([]);
-  const [totalPaid, setTotalPaid] = useState(0);
-  const [payAmount, setPayAmount] = useState("");
-  const [payDate, setPayDate] = useState(new Date().toISOString().split("T")[0]);
-  const [payMethod, setPayMethod] = useState("CASH");
-  const [payNotes, setPayNotes] = useState("");
-
-  const hasGRN = po.status === "FULLY_RECEIVED" || po.status === "PARTIALLY_RECEIVED";
-  const isLocked = po.status === "FULLY_RECEIVED" || po.status === "CANCELLED";
-
-  useEffect(() => { loadItems(); }, []);
-
-  const loadItems = async () => {
-    try {
-      const data = await getPurchaseOrderItems(po.id);
-      setItems(data);
-      setReceiveLines(data.map(item => ({
-        poItemId: item.id, productId: item.product?.id, productName: item.product?.name,
-        productSize: item.product?.size, orderedQty: item.quantity,
-        alreadyReceived: item.receivedQuantity || 0,
-        remaining: item.quantity - (item.receivedQuantity || 0),
-        receiveQty: Math.max(0, item.quantity - (item.receivedQuantity || 0)),
-        purchasePrice: item.price || 0,
-      })));
-    } catch { setError("Failed to load items"); }
-  };
-
-  const loadGRNs = async () => {
-    try { const data = await getGRNsForPO(po.id); setGrns(data); } catch { setGrns([]); }
-  };
-
-  const loadPayments = async () => {
-    try {
-      const [pmts, paid] = await Promise.all([getSupplierPayments(po.id), getSupplierTotalPaid(po.id)]);
-      setPayments(pmts); setTotalPaid(parseFloat(paid) || 0);
-    } catch { setPayments([]); setTotalPaid(0); }
-  };
-
-  const handleTabChange = (t) => {
-    setTab(t);
-    if (t === "grns") loadGRNs();
-    if (t === "payments") loadPayments();
-  };
-
-  const handleAddItem = async () => {
-    if (!newItemProduct || !newItemPrice || !newItemQty) { setError("Fill all fields"); return; }
-    try {
-      await addPurchaseOrderItem(po.id, { product: { id: newItemProduct.id }, price: parseFloat(newItemPrice), quantity: parseInt(newItemQty) });
-      setNewItemProduct(null); setNewItemProductSearch(""); setNewItemPrice(""); setNewItemQty(1);
-      loadItems(); onRefresh();
-    } catch { setError("Failed to add item"); }
-  };
-
-  const handleUpdateItem = async (itemId) => {
-    try {
-      await updatePurchaseOrderItem(po.id, itemId, { price: parseFloat(editItemPrice), quantity: parseInt(editItemQty) });
-      setEditingItemId(null); loadItems(); onRefresh();
-    } catch { setError("Failed to update item"); }
-  };
-
-  const handleRemoveItem = async (itemId) => {
-    if (!window.confirm("Remove this item?")) return;
-    try { await removePurchaseOrderItem(po.id, itemId); loadItems(); onRefresh(); }
-    catch { setError("Failed to remove item"); }
-  };
-
-  const handleReceiveStock = async () => {
-    const toReceive = receiveLines.filter(l => parseInt(l.receiveQty) > 0);
-    if (toReceive.length === 0) { setError("Enter quantity for at least one item"); return; }
-    for (const l of toReceive) {
-      if (parseInt(l.receiveQty) > l.remaining) { setError(`Max ${l.remaining} for ${l.productName}`); return; }
-    }
-    try {
-      setLoading(true); setError("");
-      await receiveStockForPO(po.id, {
-        supplier: { id: po.supplier?.id }, invoiceNumber: receiveInvoice || null, receiptDate: receiveDate,
-        items: toReceive.map(l => ({ product: { id: l.productId }, purchaseOrderItem: { id: l.poItemId }, quantity: parseInt(l.receiveQty), purchasePrice: parseFloat(l.purchasePrice) || 0 }))
-      });
-      setTab("grns"); loadItems(); loadGRNs(); onRefresh();
-    } catch (e) { setError(e.response?.data?.message || "Failed to receive stock"); }
-    finally { setLoading(false); }
-  };
-
-  const handleRecordPayment = async () => {
-    if (!payAmount || parseFloat(payAmount) <= 0) { setError("Enter a valid amount"); return; }
-    if (!hasGRN) { setError("Receive goods first before recording payment"); return; }
-    try {
-      setLoading(true); setError("");
-      await recordSupplierPayment(po.id, { amount: parseFloat(payAmount), paymentDate: payDate, paymentMethod: payMethod, notes: payNotes });
-      setPayAmount(""); setPayNotes(""); loadPayments(); onRefresh();
-    } catch (e) { setError(e.response?.data?.message || "Failed to record payment"); }
-    finally { setLoading(false); }
-  };
-
-  const handleStatusChange = async (status) => {
-    try { await updatePurchaseOrderStatus(po.id, status); onRefresh(); }
-    catch (e) { setError(e.response?.data?.message || "Failed to update status"); }
-  };
-
-  const mSub = items.reduce((s, i) => s + (i.price || 0) * (i.quantity || 0), 0);
-  const mTax = items.reduce((s, i) => s + (i.price || 0) * (i.quantity || 0) * ((i.product?.gst || 0) / 100), 0);
-  const orderAmt = parseFloat(po.totalAmount) || 0;
-  const amtDue = orderAmt - totalPaid;
-
-  const tabStyle = (tabKey) => ({
-    padding: "7px 16px", border: "none", cursor: "pointer", fontSize: "12px", fontWeight: 600,
-    background: tab === tabKey ? t.tableHead : t.surfaceAlt, color: tab === tabKey ? t.tableHeadText : t.textSub,
-    borderRadius: "6px", transition: "all 0.15s"
-  });
-
-  return (
-    <tr>
-      <td colSpan={9} style={{ padding: 0, background: t.surfaceAlt, borderBottom: `3px solid ${t.primary}` }}>
-        <div style={{ padding: "20px 24px" }}>
-          {/* Header row */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <span style={{ fontWeight: 700, fontSize: "15px", color: t.text }}>{po.poNumber}</span>
-              <span style={{ color: t.textSub, fontSize: "13px" }}>— {po.supplier?.name} — {po.orderDate}</span>
-            </div>
-            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-              {po.status !== "CANCELLED" && po.status !== "FULLY_RECEIVED" && (
-                <>
-                  {["APPROVED", "SENT_TO_SUPPLIER"].map(st => (
-                    <button key={st} style={{ padding: "5px 10px", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "11px", fontWeight: 600, background: STATUS_COLORS[st], color: "white" }}
-                      onClick={() => handleStatusChange(st)}>{STATUS_LABELS[st]}</button>
-                  ))}
-                  <button style={{ padding: "5px 10px", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "11px", fontWeight: 600, background: "#ef4444", color: "white" }}
-                    onClick={() => handleStatusChange("CANCELLED")}>Cancel</button>
-                </>
-              )}
-              <button style={{ padding: "5px 12px", border: `1px solid ${t.border}`, borderRadius: "5px", cursor: "pointer", fontSize: "12px", background: t.surface, color: t.text }}
-                onClick={onClose}>✕ Close</button>
-            </div>
-          </div>
-
-          {error && <div style={ps.alertError}>{error}</div>}
-
-          {/* Tabs */}
-          <div style={{ display: "flex", gap: "6px", marginBottom: "16px" }}>
-            {[["items","📋 Items"],["receive","📦 Receive Stock"],["grns","🗂 GRN History"],["payments","💳 Payments"]].map(([t, label]) => (
-              <button key={t} style={tabStyle(t)} onClick={() => handleTabChange(t)}>{label}</button>
-            ))}
-          </div>
-
-          {/* ITEMS TAB */}
-          {tab === "items" && (
-            <>
-              {isLocked && (
-                <div style={ps.alertInfo}>
-                  This PO is {po.status === "FULLY_RECEIVED" ? "fully received" : "cancelled"} — items cannot be modified.
-                </div>
-              )}
-              {!isLocked && (
-                <div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "center" }}>
-                  <div style={{ flex: 1 }}>
-                    <SearchDropdown placeholder="Add product..." items={products}
-                      labelFn={p => `${p.name}${p.size ? ` - ${p.size}` : ""} (${p.brand?.name || ""})`}
-                      value={newItemProductSearch} onChange={setNewItemProductSearch}
-                      onSelect={prod => { setNewItemProduct(prod); if (prod) getCurrentPrice(prod.id).then(pr => { if (pr?.costPrice) setNewItemPrice(String(pr.costPrice)); }).catch(() => {}); }} />
-                  </div>
-                  <input style={{ ...s.input, width: "90px" }} type="number" placeholder="Price" value={newItemPrice} onChange={e => setNewItemPrice(e.target.value)} />
-                  <input style={{ ...s.input, width: "70px" }} type="number" placeholder="Qty" min="1" value={newItemQty} onChange={e => setNewItemQty(e.target.value)} />
-                  <button style={s.btnSmGreen} onClick={handleAddItem}>+ Add</button>
-                </div>
-              )}
-              <table style={s.table}>
-                <thead><tr style={s.thead}>
-                  <th style={s.th}>Product</th><th style={s.th}>GST%</th><th style={s.th}>Cost Price</th>
-                  <th style={s.th}>Qty</th><th style={s.th}>Received</th><th style={s.th}>Line Total</th><th style={s.th}>Tax</th><th style={s.th}></th>
-                </tr></thead>
-                <tbody>
-                  {items.map(item => {
-                    const isEditing = editingItemId === item.id;
-                    const price = isEditing ? (parseFloat(editItemPrice) || 0) : (item.price || 0);
-                    const qty = isEditing ? (parseInt(editItemQty) || 0) : (item.quantity || 0);
-                    const gst = item.product?.gst || 0;
-                    const recv = item.receivedQuantity || 0;
-                    return (
-                      <tr key={item.id} style={s.tr}>
-                        <td style={s.td}>{item.product?.name}{item.product?.size ? ` - ${item.product.size}` : ""}</td>
-                        <td style={s.td}>{gst}%</td>
-                        <td style={s.td}>
-                          <input style={{ ...s.input, width: "90px", background: isEditing ? t.inputBg : t.surfaceAlt }} type="number"
-                            value={isEditing ? editItemPrice : item.price}
-                            onFocus={() => { if (!isEditing && !isLocked) { setEditingItemId(item.id); setEditItemPrice(String(item.price)); setEditItemQty(String(item.quantity)); } }}
-                            onChange={e => { if (isEditing) setEditItemPrice(e.target.value); }}
-                            readOnly={isLocked} />
-                        </td>
-                        <td style={s.td}>
-                          <input style={{ ...s.input, width: "65px", background: isEditing ? t.inputBg : t.surfaceAlt }} type="number"
-                            value={isEditing ? editItemQty : item.quantity}
-                            onFocus={() => { if (!isEditing && !isLocked) { setEditingItemId(item.id); setEditItemPrice(String(item.price)); setEditItemQty(String(item.quantity)); } }}
-                            onChange={e => { if (isEditing) setEditItemQty(e.target.value); }}
-                            readOnly={isLocked} />
-                        </td>
-                        <td style={{ ...s.td, color: recv >= item.quantity ? "#16a34a" : recv > 0 ? "#f59e0b" : "#6b7280", fontWeight: 600 }}>
-                          {recv}/{item.quantity}
-                        </td>
-                        <td style={s.td}>₹{(price * qty).toFixed(2)}</td>
-                        <td style={s.td}>₹{(price * qty * gst / 100).toFixed(2)}</td>
-                        <td style={s.td}>
-                          {isEditing && <button style={{ ...s.btnSmGreen, marginRight: "4px" }} onClick={() => handleUpdateItem(item.id)}>Save</button>}
-                          {!isLocked && <button style={s.btnSmRed} onClick={() => handleRemoveItem(item.id)}>✕</button>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {items.length === 0 && <tr><td colSpan={8} style={{ ...s.td, textAlign: "center", color: "#9ca3af" }}>No items</td></tr>}
-                </tbody>
-              </table>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
-                <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px 20px", minWidth: "240px" }}>
-                  <div style={s.totalRow}><span>Sub Total</span><span>₹{mSub.toFixed(2)}</span></div>
-                  <div style={s.totalRow}><span>GST</span><span>₹{mTax.toFixed(2)}</span></div>
-                  <div style={{ ...s.totalRow, fontWeight: 700, fontSize: "15px", borderTop: `1px solid ${t.border}`, paddingTop: "8px", marginTop: "4px" }}>
-                    <span>Grand Total</span><span>₹{(mSub + mTax).toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* RECEIVE STOCK TAB */}
-          {tab === "receive" && (
-            <>
-              <div style={{ display: "flex", gap: "16px", marginBottom: "14px" }}>
-                <div style={{ flex: "1 1 200px" }}>
-                  <label style={s.label}>Supplier Invoice No. (optional)</label>
-                  <input style={s.input} placeholder="e.g. INV-001" value={receiveInvoice} onChange={e => setReceiveInvoice(e.target.value)} />
-                </div>
-                <div style={{ flex: "1 1 160px" }}>
-                  <label style={s.label}>Receipt Date</label>
-                  <input style={s.input} type="date" value={receiveDate} onChange={e => setReceiveDate(e.target.value)} />
-                </div>
-              </div>
-              <table style={s.table}>
-                <thead><tr style={s.thead}>
-                  <th style={s.th}>Product</th><th style={s.th}>Ordered</th><th style={s.th}>Received</th>
-                  <th style={s.th}>Remaining</th><th style={s.th}>Receive Now</th><th style={s.th}>Purchase Price</th><th style={s.th}>Total</th>
-                </tr></thead>
-                <tbody>
-                  {receiveLines.map((line, idx) => {
-                    const qty = parseInt(line.receiveQty) || 0;
-                    const price = parseFloat(line.purchasePrice) || 0;
-                    const over = qty > line.remaining;
-                    return (
-                      <tr key={idx} style={s.tr}>
-                        <td style={s.td}>{line.productName}{line.productSize ? ` - ${line.productSize}` : ""}</td>
-                        <td style={s.td}>{line.orderedQty}</td>
-                        <td style={s.td}>{line.alreadyReceived}</td>
-                        <td style={{ ...s.td, color: line.remaining === 0 ? t.success : t.text, fontWeight: line.remaining === 0 ? 600 : 400 }}>
-                          {line.remaining === 0 ? "✓ Done" : line.remaining}
-                        </td>
-                        <td style={s.td}>
-                          <input style={{ ...s.input, width: "75px", borderColor: over ? "#ef4444" : "#d1d5db" }}
-                            type="number" min="0" max={line.remaining} value={line.receiveQty}
-                            disabled={line.remaining === 0}
-                            onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, receiveQty: e.target.value } : l))} />
-                          {over && <div style={{ fontSize: "11px", color: "#ef4444" }}>Max {line.remaining}</div>}
-                        </td>
-                        <td style={s.td}>
-                          <input style={{ ...s.input, width: "90px" }} type="number" value={line.purchasePrice}
-                            onChange={e => setReceiveLines(prev => prev.map((l, i) => i === idx ? { ...l, purchasePrice: e.target.value } : l))} />
-                        </td>
-                        <td style={s.td}>₹{(qty * price).toFixed(2)}</td>
-                      </tr>
-                    );
-                  })}
-                  {receiveLines.every(l => l.remaining === 0) && (
-                    <tr><td colSpan={7} style={{ ...s.td, textAlign: "center", color: "#16a34a", fontWeight: 600 }}>✓ All items fully received</td></tr>
-                  )}
-                </tbody>
-              </table>
-              {receiveLines.some(l => l.remaining > 0) && (
-                <div style={{ marginTop: "12px" }}>
-                  <button style={s.btnGreen} onClick={handleReceiveStock} disabled={loading}>Confirm Receipt & Add to Inventory</button>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* GRN HISTORY TAB */}
-          {tab === "grns" && (
-            <table style={s.table}>
-              <thead><tr style={s.thead}>
-                <th style={s.th}>GRN ID</th><th style={s.th}>Supplier Invoice</th><th style={s.th}>Date</th><th style={s.th}>Items</th>
-              </tr></thead>
-              <tbody>
-                {grns.length === 0 && <tr><td colSpan={4} style={{ ...s.td, textAlign: "center", color: "#9ca3af" }}>No receipts yet</td></tr>}
-                {grns.map(g => (
-                  <tr key={g.id} style={s.tr}>
-                    <td style={{ ...s.td, fontWeight: 600 }}>GRN-{g.id}</td>
-                    <td style={s.td}>{g.invoiceNumber || "-"}</td>
-                    <td style={s.td}>{g.receiptDate}</td>
-                    <td style={s.td}>{g.items?.length || "-"} item(s)</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          {/* PAYMENTS TAB */}
-          {tab === "payments" && (
-            <>
-              <div style={{ display: "flex", gap: "12px", marginBottom: "16px" }}>
-                <div style={s.card}><div style={s.cardLabel}>Order Amount</div><div style={s.cardValue}>₹{orderAmt.toFixed(2)}</div></div>
-                <div style={{ ...s.card, borderColor: "#16a34a" }}><div style={s.cardLabel}>Paid</div><div style={{ ...s.cardValue, color: "#16a34a" }}>₹{totalPaid.toFixed(2)}</div></div>
-                <div style={{ ...s.card, borderColor: amtDue > 0 ? "#ef4444" : "#16a34a" }}>
-                  <div style={s.cardLabel}>Due</div>
-                  <div style={{ ...s.cardValue, color: amtDue > 0 ? "#ef4444" : "#16a34a" }}>₹{Math.max(0, amtDue).toFixed(2)}</div>
-                </div>
-              </div>
-              {!hasGRN && (
-                <div style={ps.alertInfo}>
-                  ⚠️ Receive goods first (GRN) before recording payment.
-                </div>
-              )}
-              {hasGRN && amtDue > 0 && (
-                <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "14px", marginBottom: "16px" }}>
-                  <div style={{ fontWeight: 600, marginBottom: "10px", fontSize: "13px", color: t.text }}>Record Payment to Supplier</div>
-                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
-                    <div style={{ flex: "1 1 100px" }}><label style={s.label}>Amount (₹)</label><input style={s.input} type="number" value={payAmount} onChange={e => setPayAmount(e.target.value)} /></div>
-                    <div style={{ flex: "1 1 130px" }}><label style={s.label}>Date</label><input style={s.input} type="date" value={payDate} onChange={e => setPayDate(e.target.value)} /></div>
-                    <div style={{ flex: "1 1 120px" }}><label style={s.label}>Method</label>
-                      <select style={s.input} value={payMethod} onChange={e => setPayMethod(e.target.value)}>
-                        {["CASH","UPI","BANK_TRANSFER","CHEQUE","NEFT","RTGS"].map(m => <option key={m} value={m}>{m.replace("_"," ")}</option>)}
-                      </select>
-                    </div>
-                    <div style={{ flex: "2 1 150px" }}><label style={s.label}>Notes</label><input style={s.input} placeholder="optional" value={payNotes} onChange={e => setPayNotes(e.target.value)} /></div>
-                    <button style={s.btnGreen} onClick={handleRecordPayment} disabled={loading}>Pay</button>
-                  </div>
-                </div>
-              )}
-              <table style={s.table}>
-                <thead><tr style={s.thead}><th style={s.th}>#</th><th style={s.th}>Date</th><th style={s.th}>Amount</th><th style={s.th}>Method</th><th style={s.th}>Notes</th></tr></thead>
-                <tbody>
-                  {payments.length === 0 && <tr><td colSpan={5} style={{ ...s.td, textAlign: "center", color: "#9ca3af" }}>No payments yet</td></tr>}
-                  {payments.map((p, i) => (
-                    <tr key={p.id} style={s.tr}>
-                      <td style={s.td}>{i + 1}</td><td style={s.td}>{p.paymentDate}</td>
-                      <td style={{ ...s.td, color: "#16a34a", fontWeight: 600 }}>₹{parseFloat(p.amount).toFixed(2)}</td>
-                      <td style={s.td}>{p.paymentMethod?.replace("_", " ")}</td>
-                      <td style={s.td}>{p.notes || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function PurchaseOrderPage() {
-  const [orders, setOrders] = useState([]);
-  const [suppliers, setSuppliers] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
-  const [expandedId, setExpandedId] = useState(null);
-  const ps = usePageStyles();
-  const { t } = ps;
-
-  // Theme-aware styles used throughout this component
-  const s = {
-    header: ps.pageHeader,
-    error: ps.alertError,
-    info: ps.alertInfo,
-    formBox: ps.formBox,
-    label: ps.label,
-    input: ps.input,
-    table: ps.table,
-    thead: ps.thead,
-    th: ps.th,
-    tr: ps.tr,
-    td: ps.td,
-    btn: ps.btnPrimary,
-    btnGreen: ps.btnSuccess,
-    btnGray: ps.btnGhost,
-    btnSmRed: ps.btnSmDanger,
-    btnSmGreen: ps.btnSmSuccess,
-    badge: ps.badge,
-    totalRow: ps.totalRow,
-    card: ps.card,
-    cardLabel: ps.cardLabel,
-    cardValue: ps.cardValue,
-  };
-
-  const [showCreate, setShowCreate] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState(null);
   const [supplierSearch, setSupplierSearch] = useState("");
   const [lines, setLines] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [productSearch, setProductSearch] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const filtered = orders.filter(o =>
-    o.poNumber?.toLowerCase().includes(search.toLowerCase()) ||
-    o.supplier?.name?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [o, sup, p] = await Promise.all([getPurchaseOrders(), getSuppliers(), getProducts()]);
-      setOrders([...o].sort((a, b) => b.id - a.id)); setSuppliers(sup); setProducts(p); setError("");
-    } catch { setError("Failed to load data"); }
-    finally { setLoading(false); }
-  };
-
-  useEffect(() => { load(); }, []);
+  const subTotal = lines.reduce((acc, l) => acc + (parseFloat(l.costPrice) || 0) * (parseInt(l.qty) || 0), 0);
+  const totalTax = lines.reduce((acc, l) => acc + (parseFloat(l.costPrice) || 0) * (parseInt(l.qty) || 0) * ((parseFloat(l.gst) || 0) / 100), 0);
 
   const handleAddLine = async () => {
     if (!selectedProduct) { setError("Select a product first"); return; }
     if (lines.find(l => l.productId === selectedProduct.id)) { setError("Product already added"); return; }
     let costPrice = "";
-    try { const pd = await getCurrentPrice(selectedProduct.id); if (pd?.costPrice) costPrice = pd.costPrice; } catch {}
-    setLines(prev => [...prev, {
-      productId: selectedProduct.id, productName: selectedProduct.name,
-      size: selectedProduct.size, unit: selectedProduct.unit,
-      gst: selectedProduct.gst || 0, costPrice, qty: 1
-    }]);
+    try { const pd = await getCurrentPrice(selectedProduct.id); if (pd?.costPrice) costPrice = String(pd.costPrice); } catch {}
+    setLines(prev => [...prev, { productId: selectedProduct.id, productName: selectedProduct.name, hsnCode: selectedProduct.hsnCode || "-", size: selectedProduct.size, gst: selectedProduct.gst || 0, costPrice, qty: 1 }]);
     setSelectedProduct(null); setProductSearch(""); setError("");
   };
 
   const updateLine = (idx, field, value) => setLines(prev => prev.map((l, i) => i === idx ? { ...l, [field]: value } : l));
   const removeLine = (idx) => setLines(prev => prev.filter((_, i) => i !== idx));
 
-  const subTotal = lines.reduce((s, l) => s + (parseFloat(l.costPrice) || 0) * (parseInt(l.qty) || 0), 0);
-  const totalTax = lines.reduce((s, l) => {
-    const base = (parseFloat(l.costPrice) || 0) * (parseInt(l.qty) || 0);
-    return s + base * ((parseFloat(l.gst) || 0) / 100);
-  }, 0);
-
-  const handleCreatePO = async () => {
+  const handleCreate = async () => {
     if (!selectedSupplier) { setError("Please select a supplier"); return; }
     if (lines.length === 0) { setError("Add at least one product"); return; }
     for (const l of lines) {
@@ -534,156 +115,638 @@ function PurchaseOrderPage() {
     }
     try {
       setLoading(true); setError("");
-      await createPurchaseOrder({
-        supplier: { id: selectedSupplier.id },
-        items: lines.map(l => ({ product: { id: l.productId }, quantity: parseInt(l.qty), price: parseFloat(l.costPrice) }))
-      });
-      setShowCreate(false); setSelectedSupplier(null); setSupplierSearch(""); setLines([]);
-      load();
-    } catch { setError("Failed to create purchase order"); }
+      await createPurchaseOrder({ supplier: { id: selectedSupplier.id }, items: lines.map(l => ({ product: { id: l.productId }, quantity: parseInt(l.qty), price: parseFloat(l.costPrice) })) });
+      onCreated();
+    } catch (e) { setError(e.response?.data?.message || "Failed to create purchase order"); }
     finally { setLoading(false); }
   };
 
-  const toggleExpand = (id) => setExpandedId(prev => prev === id ? null : id);
-
   return (
-    <MainLayout>
-      <div style={s.header}>
-        <h2 style={{ margin: 0 }}>Purchase Orders</h2>
+    <div>
+      <PageHeader title="New Purchase Order" onBack={onBack} t={t} />
+      {error && <div style={ps.alertError}>{error}</div>}
+
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+        <label style={{ ...s.label, fontWeight: 700, fontSize: "14px" }}>Supplier *</label>
+        <div style={{ maxWidth: "400px", marginTop: "6px" }}>
+          <SearchDropdown placeholder="Type to search supplier..." items={suppliers} labelFn={sup => sup.name} value={supplierSearch} onChange={setSupplierSearch} onSelect={setSelectedSupplier} />
+        </div>
+        {selectedSupplier && (
+          <div style={{ marginTop: "12px", display: "flex", gap: "24px", fontSize: "13px", color: t.textSub }}>
+            <span>✓ <strong style={{ color: t.text }}>{selectedSupplier.name}</strong></span>
+            {selectedSupplier.phone && <span>📞 {selectedSupplier.phone}</span>}
+            {selectedSupplier.gstNumber && <span>GST: {selectedSupplier.gstNumber}</span>}
+            {selectedSupplier.address && <span>📍 {selectedSupplier.address}</span>}
+          </div>
+        )}
+      </div>
+
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+        <label style={{ ...s.label, fontWeight: 700, fontSize: "14px", display: "block", marginBottom: "8px" }}>Add Products</label>
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-          <input style={{ ...s.input, width: "220px" }} placeholder="Search PO#, supplier..."
-            value={search} onChange={e => setSearch(e.target.value)} />
-          <button style={s.btnGreen} onClick={() => { setShowCreate(true); setSelectedSupplier(null); setSupplierSearch(""); setLines([]); setError(""); }}>
-            + New PO
-          </button>
+          <div style={{ flex: 1 }}>
+            <SearchDropdown placeholder="Search product by name or brand..." items={products} labelFn={p => `${p.name}${p.size ? ` - ${p.size}` : ""} (${p.brand?.name || ""})`} value={productSearch} onChange={setProductSearch} onSelect={setSelectedProduct} />
+            {selectedProduct && <div style={{ marginTop: "4px", fontSize: "12px", color: "#2563eb" }}>✓ {selectedProduct.name} | GST: {selectedProduct.gst || 0}%</div>}
+          </div>
+          <button style={ps.btnPrimary} onClick={handleAddLine}>+ Add</button>
         </div>
       </div>
 
-      {error && <div style={s.error}>{error}</div>}
-      {loading && <div style={s.info}>Loading...</div>}
-
-      {showCreate && (
-        <div style={s.formBox}>
-          <h3 style={{ margin: "0 0 16px" }}>Create Purchase Order</h3>
-          <div style={{ marginBottom: "16px", maxWidth: "360px" }}>
-            <label style={s.label}>Supplier *</label>
-            <SearchDropdown placeholder="Type to search supplier..." items={suppliers}
-              labelFn={sup => sup.name} value={supplierSearch} onChange={setSupplierSearch} onSelect={setSelectedSupplier} />
-            {selectedSupplier && <div style={{ marginTop: "6px", fontSize: "13px", color: "#16a34a" }}>✓ {selectedSupplier.name}</div>}
-          </div>
-          <div style={{ marginBottom: "12px" }}>
-            <label style={{ ...s.label, display: "block", marginBottom: "8px" }}>Add Product</label>
-            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-              <div style={{ flex: 1 }}>
-                <SearchDropdown placeholder="Type product name, brand..."
-                  items={products} labelFn={p => `${p.name}${p.size ? ` - ${p.size}` : ""} (${p.brand?.name || ""})`}
-                  value={productSearch} onChange={setProductSearch} onSelect={setSelectedProduct} />
-                {selectedProduct && <div style={{ marginTop: "4px", fontSize: "12px", color: "#2563eb" }}>✓ {selectedProduct.name} | GST: {selectedProduct.gst || 0}%</div>}
-              </div>
-              <button style={s.btn} onClick={handleAddLine}>Add</button>
-            </div>
-          </div>
-          {lines.length > 0 && (
-            <table style={{ ...s.table, marginBottom: "16px" }}>
-              <thead><tr style={s.thead}>
-                <th style={s.th}>Product</th><th style={s.th}>GST%</th>
-                <th style={s.th}>Cost Price (₹)*</th><th style={s.th}>Qty*</th>
-                <th style={s.th}>Line Total</th><th style={s.th}>Tax</th><th style={s.th}></th>
-              </tr></thead>
-              <tbody>
-                {lines.map((line, idx) => {
-                  const price = parseFloat(line.costPrice) || 0, qty = parseInt(line.qty) || 0;
-                  return (
-                    <tr key={idx} style={s.tr}>
-                      <td style={s.td}>{line.productName}{line.size ? ` - ${line.size}` : ""}</td>
-                      <td style={s.td}>{line.gst}%</td>
-                      <td style={s.td}><input style={{ ...s.input, width: "100px" }} type="number" value={line.costPrice} onChange={e => updateLine(idx, "costPrice", e.target.value)} /></td>
-                      <td style={s.td}><input style={{ ...s.input, width: "70px" }} type="number" min="1" value={line.qty} onChange={e => updateLine(idx, "qty", e.target.value)} /></td>
-                      <td style={s.td}>₹{(price * qty).toFixed(2)}</td>
-                      <td style={s.td}>₹{(price * qty * line.gst / 100).toFixed(2)}</td>
-                      <td style={s.td}><button style={s.btnSmRed} onClick={() => removeLine(idx)}>✕</button></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-          {lines.length > 0 && (
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}>
-              <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px 20px", minWidth: "240px" }}>
-                <div style={s.totalRow}><span>Sub Total</span><span>₹{subTotal.toFixed(2)}</span></div>
-                <div style={s.totalRow}><span>GST</span><span>₹{totalTax.toFixed(2)}</span></div>
-                <div style={{ ...s.totalRow, fontWeight: 700, fontSize: "15px", borderTop: `1px solid ${t.border}`, paddingTop: "8px", marginTop: "4px" }}>
-                  <span>Grand Total</span><span>₹{(subTotal + totalTax).toFixed(2)}</span>
-                </div>
+      {lines.length > 0 && (
+        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+          <table style={s.table}>
+            <thead><tr style={s.thead}>
+              <th style={s.th}>Product Code</th><th style={s.th}>Product Name</th>
+              <th style={s.th}>CP (Rs.) *</th><th style={s.th}>GST %</th>
+              <th style={s.th}>Tax (Rs.)</th><th style={s.th}>Qty *</th>
+              <th style={s.th}>Total Value (Rs.)</th><th style={s.th}></th>
+            </tr></thead>
+            <tbody>
+              {lines.map((line, idx) => {
+                const price = parseFloat(line.costPrice) || 0, qty = parseInt(line.qty) || 0;
+                const tax = price * qty * (line.gst / 100);
+                return (
+                  <tr key={idx} style={s.tr}>
+                    <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{line.hsnCode}</td>
+                    <td style={s.td}>{line.productName}{line.size ? ` - ${line.size}` : ""}</td>
+                    <td style={s.td}><input style={{ ...s.input, width: "100px" }} type="number" min="0" value={line.costPrice} onChange={e => updateLine(idx, "costPrice", e.target.value)} /></td>
+                    <td style={s.td}>{line.gst}%</td>
+                    <td style={s.td}>Rs.{tax.toFixed(2)}</td>
+                    <td style={s.td}><input style={{ ...s.input, width: "70px" }} type="number" min="1" value={line.qty} onChange={e => updateLine(idx, "qty", e.target.value)} /></td>
+                    <td style={{ ...s.td, fontWeight: 600 }}>Rs.{(price * qty + tax).toFixed(2)}</td>
+                    <td style={s.td}><button style={ps.btnSmDanger} onClick={() => removeLine(idx)}>✕</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+            <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px 20px", minWidth: "260px" }}>
+              <div style={s.totalRow}><span>Sub Total</span><span>Rs.{subTotal.toFixed(2)}</span></div>
+              <div style={s.totalRow}><span>Total GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
+              <div style={{ ...s.totalRow, fontWeight: 700, fontSize: "16px", borderTop: `1px solid ${t.border}`, paddingTop: "8px", marginTop: "4px" }}>
+                <span>Grand Total</span><span>Rs.{(subTotal + totalTax).toFixed(2)}</span>
               </div>
             </div>
-          )}
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button style={s.btnGreen} onClick={handleCreatePO} disabled={loading}>Confirm & Generate PO</button>
-            <button style={s.btnGray} onClick={() => { setShowCreate(false); setLines([]); }}>Cancel</button>
           </div>
         </div>
       )}
 
-      <table style={s.table}>
-        <thead>
-          <tr style={s.thead}>
-            <th style={s.th}></th>
-            <th style={s.th}>PO Number</th><th style={s.th}>Date</th><th style={s.th}>Supplier</th>
-            <th style={s.th}>Order Amt</th><th style={s.th}>Amt Paid</th><th style={s.th}>Amt Due</th>
-            <th style={s.th}>Status</th><th style={s.th}>Payment</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filtered.length === 0 && !loading && (
-            <tr><td colSpan={9} style={{ ...s.td, textAlign: "center", color: "#9ca3af" }}>No purchase orders found</td></tr>
-          )}
-          {filtered.map(o => {
-            const orderAmt = parseFloat(o.totalAmount) || 0;
-            const amtPaid = parseFloat(o.amountPaid) || 0;
-            const amtDue = orderAmt - amtPaid;
-            const isExpanded = expandedId === o.id;
-            const payStatus = amtPaid === 0 ? "Unpaid" : amtDue <= 0 ? "Paid" : "Partial";
-            const PAY_COLORS = { Unpaid: "#6b7280", Partial: "#f59e0b", Paid: "#16a34a" };
-            return (
-              <Fragment key={o.id}>
-                <tr
-                  style={{ ...s.tr, cursor: "pointer", background: isExpanded ? t.surfaceAlt : t.surface, borderLeft: isExpanded ? `3px solid ${t.primary}` : "3px solid transparent" }}
-                  onClick={() => toggleExpand(o.id)}>
-                  <td style={{ ...s.td, width: "32px", textAlign: "center", color: t.textMuted, fontSize: "12px" }}>
-                    {isExpanded ? "▲" : "▼"}
-                  </td>
-                  <td style={{ ...s.td, fontWeight: 600, color: t.text }}>{o.poNumber}</td>
-                  <td style={s.td}>{o.orderDate}</td>
-                  <td style={s.td}>{o.supplier?.name || "-"}</td>
-                  <td style={s.td}>₹{orderAmt.toFixed(2)}</td>
-                  <td style={{ ...s.td, color: amtPaid > 0 ? t.success : t.text }}>₹{amtPaid.toFixed(2)}</td>
-                  <td style={{ ...s.td, color: amtDue > 0 ? t.danger : t.success, fontWeight: 600 }}>₹{Math.max(0, amtDue).toFixed(2)}</td>
-                  <td style={s.td}>
-                    <span style={{ ...s.badge, background: STATUS_COLORS[o.status] || "#6b7280" }}>
-                      {STATUS_LABELS[o.status] || o.status}
-                    </span>
-                  </td>
-                  <td style={s.td}>
-                    <span style={{ ...s.badge, background: PAY_COLORS[payStatus] }}>{payStatus}</span>
-                  </td>
-                </tr>
-                {isExpanded && (
-                  <ExpandedPORow
-                    po={o}
-                    products={products}
-                    onRefresh={load}
-                    onClose={() => setExpandedId(null)}
-                  />
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-    </MainLayout>
+      <div style={{ display: "flex", gap: "10px" }}>
+        <button style={ps.btnSuccess} onClick={handleCreate} disabled={loading}>{loading ? "Creating..." : "Generate PO"}</button>
+        <button style={ps.btnGhost} onClick={onBack}>Cancel</button>
+      </div>
+    </div>
   );
 }
 
-export default PurchaseOrderPage;
+// ── Edit PO Page (DRAFT only) ─────────────────────────────────────────────────
+function EditPOPage({ po, suppliers, products, onBack, onSaved }) {
+  const ps = usePageStyles();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const s = { label: ps.label, input: ps.input, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td, totalRow: ps.totalRow };
+
+  const [items, setItems] = useState([]);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productSearch, setProductSearch] = useState("");
+  const [newPrice, setNewPrice] = useState("");
+  const [newQty, setNewQty] = useState(1);
+  const [editingId, setEditingId] = useState(null);
+  const [editPrice, setEditPrice] = useState("");
+  const [editQty, setEditQty] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => { loadItems(); }, []);
+
+  const loadItems = async () => {
+    try { setItems(await getPurchaseOrderItems(po.id)); } catch { setError("Failed to load items"); }
+  };
+
+  const subTotal = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (i.quantity || 0), 0);
+  const totalTax = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (i.quantity || 0) * ((i.product?.gst || 0) / 100), 0);
+
+  const handleAdd = async () => {
+    if (!selectedProduct || !newPrice || !newQty) { setError("Fill all fields"); return; }
+    try {
+      setLoading(true);
+      await addPurchaseOrderItem(po.id, { product: { id: selectedProduct.id }, price: parseFloat(newPrice), quantity: parseInt(newQty) });
+      setSelectedProduct(null); setProductSearch(""); setNewPrice(""); setNewQty(1);
+      loadItems(); onSaved();
+    } catch (e) { setError(e.response?.data?.message || "Failed to add item"); }
+    finally { setLoading(false); }
+  };
+
+  const handleUpdate = async (itemId) => {
+    try {
+      setLoading(true);
+      await updatePurchaseOrderItem(po.id, itemId, { price: parseFloat(editPrice), quantity: parseInt(editQty) });
+      setEditingId(null); loadItems(); onSaved();
+    } catch (e) { setError(e.response?.data?.message || "Failed to update item"); }
+    finally { setLoading(false); }
+  };
+
+  const handleRemove = async (itemId) => {
+    if (!window.confirm("Remove this item?")) return;
+    try { await removePurchaseOrderItem(po.id, itemId); loadItems(); onSaved(); }
+    catch (e) { setError(e.response?.data?.message || "Failed to remove item"); }
+  };
+
+  return (
+    <div>
+      <PageHeader title={`Edit PO — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name} · ${po.orderDate}`} onBack={onBack} t={t} />
+      {error && <div style={ps.alertError}>{error}</div>}
+
+      {/* Add product row */}
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+        <label style={{ ...s.label, fontWeight: 700, fontSize: "14px", display: "block", marginBottom: "8px" }}>Add Product</label>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <SearchDropdown placeholder="Search product..." items={products} labelFn={p => `${p.name}${p.size ? ` - ${p.size}` : ""} (${p.brand?.name || ""})`} value={productSearch} onChange={setProductSearch} onSelect={prod => { setSelectedProduct(prod); if (prod) getCurrentPrice(prod.id).then(pr => { if (pr?.costPrice) setNewPrice(String(pr.costPrice)); }).catch(() => {}); }} />
+          </div>
+          <input style={{ ...s.input, width: "100px" }} type="number" placeholder="Price" value={newPrice} onChange={e => setNewPrice(e.target.value)} />
+          <input style={{ ...s.input, width: "70px" }} type="number" placeholder="Qty" min="1" value={newQty} onChange={e => setNewQty(e.target.value)} />
+          <button style={ps.btnPrimary} onClick={handleAdd} disabled={loading}>+ Add</button>
+        </div>
+      </div>
+
+      {/* Items table */}
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+        <table style={s.table}>
+          <thead><tr style={s.thead}>
+            <th style={s.th}>Product Code</th><th style={s.th}>Product Name</th>
+            <th style={s.th}>CP (Rs.)</th><th style={s.th}>GST %</th>
+            <th style={s.th}>Tax (Rs.)</th><th style={s.th}>Qty</th>
+            <th style={s.th}>Total Value (Rs.)</th><th style={s.th}></th>
+          </tr></thead>
+          <tbody>
+            {items.length === 0 && <tr><td colSpan={8} style={{ ...s.td, textAlign: "center", color: "#9ca3af" }}>No items yet</td></tr>}
+            {items.map(item => {
+              const isEditing = editingId === item.id;
+              const price = isEditing ? (parseFloat(editPrice) || 0) : (parseFloat(item.price) || 0);
+              const qty = isEditing ? (parseInt(editQty) || 0) : (item.quantity || 0);
+              const gst = item.product?.gst || 0;
+              const tax = price * qty * gst / 100;
+              return (
+                <tr key={item.id} style={s.tr}>
+                  <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{item.product?.hsnCode || "-"}</td>
+                  <td style={s.td}>{item.product?.name}{item.product?.size ? ` - ${item.product.size}` : ""}</td>
+                  <td style={s.td}>
+                    <input style={{ ...s.input, width: "100px", background: isEditing ? t.inputBg : t.surfaceAlt }} type="number"
+                      value={isEditing ? editPrice : item.price}
+                      onFocus={() => { if (!isEditing) { setEditingId(item.id); setEditPrice(String(item.price)); setEditQty(String(item.quantity)); } }}
+                      onChange={e => { if (isEditing) setEditPrice(e.target.value); }} />
+                  </td>
+                  <td style={s.td}>{gst}%</td>
+                  <td style={s.td}>Rs.{tax.toFixed(2)}</td>
+                  <td style={s.td}>
+                    <input style={{ ...s.input, width: "70px", background: isEditing ? t.inputBg : t.surfaceAlt }} type="number"
+                      value={isEditing ? editQty : item.quantity}
+                      onFocus={() => { if (!isEditing) { setEditingId(item.id); setEditPrice(String(item.price)); setEditQty(String(item.quantity)); } }}
+                      onChange={e => { if (isEditing) setEditQty(e.target.value); }} />
+                  </td>
+                  <td style={{ ...s.td, fontWeight: 600 }}>Rs.{(price * qty + tax).toFixed(2)}</td>
+                  <td style={s.td}>
+                    {isEditing && <button style={{ ...ps.btnSmSuccess, marginRight: "4px" }} onClick={() => handleUpdate(item.id)}>Save</button>}
+                    <button style={ps.btnSmDanger} onClick={() => handleRemove(item.id)}>✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+          <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px 20px", minWidth: "260px" }}>
+            <div style={s.totalRow}><span>Sub Total</span><span>Rs.{subTotal.toFixed(2)}</span></div>
+            <div style={s.totalRow}><span>Total GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
+            <div style={{ ...s.totalRow, fontWeight: 700, fontSize: "16px", borderTop: `1px solid ${t.border}`, paddingTop: "8px", marginTop: "4px" }}>
+              <span>Grand Total</span><span>Rs.{(subTotal + totalTax).toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button style={ps.btnGhost} onClick={onBack}>← Back to List</button>
+    </div>
+  );
+}
+
+// ── GRN Full Page ─────────────────────────────────────────────────────────────
+function GRNPage({ po, products, onBack, onDone }) {
+  const ps = usePageStyles();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const s = { label: ps.label, input: ps.input, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td };
+
+  const [poItems, setPoItems] = useState([]);
+  const [grnHistory, setGrnHistory] = useState([]);
+  const [lines, setLines] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    try {
+      const [items, grns] = await Promise.all([getPurchaseOrderItems(po.id), getGRNsForPO(po.id)]);
+      setPoItems(items);
+      setGrnHistory(grns);
+      setLines(items.map(i => ({
+        poItemId: i.id,
+        productId: i.product?.id,
+        productName: i.product?.name,
+        purchasePrice: parseFloat(i.price) || 0,
+        orderedQty: i.quantity,
+        alreadyReceived: i.receivedQuantity || 0,
+        receivedQty: String(i.quantity - (i.receivedQuantity || 0))  // pre-fill with remaining qty
+      })));
+    } catch { setError("Failed to load PO data"); }
+  };
+
+  const updateQty = (idx, val) => setLines(prev => prev.map((l, i) => i === idx ? { ...l, receivedQty: val } : l));
+
+  const handleReceive = async () => {
+    const toReceive = lines.filter(l => parseInt(l.receivedQty) > 0);
+    if (toReceive.length === 0) { setError("Enter at least one received quantity"); return; }
+    // Validate against remaining qty
+    for (const l of toReceive) {
+      const remaining = l.orderedQty - l.alreadyReceived;
+      if (parseInt(l.receivedQty) > remaining) {
+        setError(`${l.productName}: max receivable is ${remaining}`); return;
+      }
+    }
+    try {
+      setLoading(true); setError("");
+      await receiveStockForPO(po.id, {
+        items: toReceive.map(l => ({
+          product: { id: l.productId },
+          purchaseOrderItem: { id: l.poItemId },
+          purchasePrice: l.purchasePrice,
+          quantity: parseInt(l.receivedQty)
+        }))
+      });
+      onDone();
+    } catch (e) { setError(e.response?.data?.message || "Failed to record GRN"); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div>
+      <PageHeader title={`Goods Receipt — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name} · ${po.orderDate}`} onBack={onBack} t={t} />
+      {error && <div style={ps.alertError}>{error}</div>}
+
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+        <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Receive Goods</div>
+        <table style={s.table}>
+          <thead><tr style={s.thead}>
+            <th style={s.th}>Product</th>
+            <th style={s.th}>Ordered Qty</th>
+            <th style={s.th}>Receive Now</th>
+          </tr></thead>
+          <tbody>
+            {lines.map((line, idx) => (
+              <tr key={idx} style={s.tr}>
+                <td style={s.td}>{line.productName}</td>
+                <td style={s.td}>{line.orderedQty}</td>
+                <td style={s.td}>
+                  <input style={{ ...s.input, width: "80px" }} type="number" min="0" max={line.orderedQty}
+                    placeholder="0" value={line.receivedQty} onChange={e => updateQty(idx, e.target.value)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ marginTop: "12px" }}>
+          <button style={ps.btnSuccess} onClick={handleReceive} disabled={loading}>{loading ? "Saving..." : "Record GRN"}</button>
+        </div>
+      </div>
+
+      {grnHistory.length > 0 && (
+        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px" }}>
+          <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>GRN History</div>
+          <table style={s.table}>
+            <thead><tr style={s.thead}>
+              <th style={s.th}>Date</th>
+              <th style={s.th}>Product</th>
+              <th style={s.th}>Qty Received</th>
+            </tr></thead>
+            <tbody>
+              {grnHistory.flatMap(grn =>
+                (grn.items || []).map((item, i) => (
+                  <tr key={`${grn.id}-${i}`} style={s.tr}>
+                    <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{grn.receivedDate || grn.createdAt || "-"}</td>
+                    <td style={s.td}>{item.product?.name || "-"}</td>
+                    <td style={s.td}>{item.quantity}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Pay Full Page ─────────────────────────────────────────────────────────────
+function PayPage({ po, onBack, onDone }) {
+  const ps = usePageStyles();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const s = { label: ps.label, input: ps.input, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td, totalRow: ps.totalRow };
+
+  const [summary, setSummary] = useState(null);
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("CASH");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => { loadSummary(); }, []);
+
+  const loadSummary = async () => {
+    try { setSummary(await getPaymentSummary(po.id)); } catch { setError("Failed to load payment summary"); }
+  };
+
+  const handlePay = async () => {
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) { setError("Enter a valid amount"); return; }
+    if (summary && amt > summary.balanceDue) { setError(`Amount exceeds balance due (Rs.${summary.balanceDue?.toFixed(2)})`); return; }
+    try {
+      setLoading(true); setError("");
+      await recordSupplierPayment(po.id, { amount: amt, paymentMethod: method, notes: note });
+      setAmount(""); setNote("");
+      await loadSummary();
+      onDone();
+    } catch (e) { setError(e.response?.data?.message || "Payment failed"); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div>
+      <PageHeader title={`Supplier Payment — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name}`} onBack={onBack} t={t} />
+      {error && <div style={ps.alertError}>{error}</div>}
+
+      {summary && (
+        <>
+          <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+            <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Payment Summary</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" }}>
+              {[
+                { label: "PO Total", value: summary.poTotal },
+                { label: "Received Value", value: summary.receivedValue },
+                { label: "Total Paid", value: summary.totalPaid },
+                { label: "Balance Due", value: summary.balanceDue, highlight: true },
+              ].map(card => (
+                <div key={card.label} style={{ background: card.highlight ? "#eff6ff" : t.surfaceAlt, border: `1px solid ${card.highlight ? "#bfdbfe" : t.border}`, borderRadius: "8px", padding: "12px" }}>
+                  <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>{card.label}</div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: card.highlight ? "#2563eb" : t.text }}>Rs.{(card.value || 0).toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* GRN History */}
+          {summary.grnHistory?.length > 0 && (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>GRN History</div>
+              <table style={s.table}>
+                <thead><tr style={s.thead}>
+                  <th style={s.th}>Date</th><th style={s.th}>Product</th><th style={s.th}>Qty</th><th style={s.th}>Unit Price</th><th style={s.th}>Value</th>
+                </tr></thead>
+                <tbody>
+                  {summary.grnHistory.flatMap((grn, gi) =>
+                    (grn.items || []).map((item, ii) => (
+                      <tr key={`${gi}-${ii}`} style={s.tr}>
+                        <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{grn.receivedDate || "-"}</td>
+                        <td style={s.td}>{item.product?.name || "-"}</td>
+                        <td style={s.td}>{item.quantity}</td>
+                        <td style={s.td}>Rs.{(item.purchasePrice || 0).toFixed(2)}</td>
+                        <td style={s.td}>Rs.{((item.quantity || 0) * (item.purchasePrice || 0)).toFixed(2)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Payment History */}
+          {summary.paymentHistory?.length > 0 && (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Payment History</div>
+              <table style={s.table}>
+                <thead><tr style={s.thead}>
+                  <th style={s.th}>Date</th><th style={s.th}>Amount</th><th style={s.th}>Method</th><th style={s.th}>Notes</th>
+                </tr></thead>
+                <tbody>
+                  {summary.paymentHistory.map(p => (
+                    <tr key={p.id} style={s.tr}>
+                      <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{p.paymentDate || "-"}</td>
+                      <td style={{ ...s.td, fontWeight: 600 }}>Rs.{(p.amount || 0).toFixed(2)}</td>
+                      <td style={s.td}>{p.paymentMethod || "-"}</td>
+                      <td style={{ ...s.td, color: t.textSub }}>{p.notes || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Make Payment */}
+          {summary.balanceDue > 0 && (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Make Payment</div>
+              <div style={{ display: "flex", gap: "10px", alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div>
+                  <label style={s.label}>Amount (Rs.) *</label>
+                  <input style={{ ...s.input, width: "140px" }} type="number" min="0" max={summary.balanceDue}
+                    placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} />
+                </div>
+                <div>
+                  <label style={s.label}>Method</label>
+                  <select style={{ ...s.input, width: "130px" }} value={method} onChange={e => setMethod(e.target.value)}>
+                    <option value="CASH">Cash</option>
+                    <option value="BANK_TRANSFER">Bank Transfer</option>
+                    <option value="CHEQUE">Cheque</option>
+                    <option value="UPI">UPI</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: "160px" }}>
+                  <label style={s.label}>Notes</label>
+                  <input style={s.input} placeholder="Optional note..." value={note} onChange={e => setNote(e.target.value)} />
+                </div>
+                <button style={ps.btnSuccess} onClick={handlePay} disabled={loading}>{loading ? "Saving..." : "Pay"}</button>
+              </div>
+            </div>
+          )}
+          {summary.balanceDue <= 0 && (
+            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "14px 16px", color: "#16a34a", fontWeight: 600 }}>
+              ✓ Fully paid
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Main PurchaseOrderPage ────────────────────────────────────────────────────
+export default function PurchaseOrderPage() {
+  const ps = usePageStyles();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const s = { table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td };
+
+  const [view, setView] = useState("list"); // "list" | "new" | "edit" | "grn" | "pay"
+  const [selectedPO, setSelectedPO] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => { loadAll(); }, []);
+
+  const loadAll = async () => {
+    try {
+      const [pos, sups, prods] = await Promise.all([getPurchaseOrders(), getSuppliers(), getProducts()]);
+      setOrders(pos);
+      setSuppliers(sups);
+      setProducts(prods);
+    } catch { setError("Failed to load data"); }
+  };
+
+  const goBack = () => { setView("list"); setSelectedPO(null); loadAll(); };
+
+  // ── Sub-page routing ──────────────────────────────────────────────────────
+  if (view === "new") {
+    return (
+      <MainLayout>
+        <NewPOPage suppliers={suppliers} products={products} onBack={goBack} onCreated={goBack} />
+      </MainLayout>
+    );
+  }
+  if (view === "edit" && selectedPO) {
+    return (
+      <MainLayout>
+        <EditPOPage po={selectedPO} suppliers={suppliers} products={products} onBack={goBack} onSaved={loadAll} />
+      </MainLayout>
+    );
+  }
+  if (view === "grn" && selectedPO) {
+    return (
+      <MainLayout>
+        <GRNPage po={selectedPO} products={products} onBack={goBack} onDone={goBack} />
+      </MainLayout>
+    );
+  }
+  if (view === "pay" && selectedPO) {
+    return (
+      <MainLayout>
+        <PayPage po={selectedPO} onBack={goBack} onDone={loadAll} />
+      </MainLayout>
+    );
+  }
+
+  // ── List view ─────────────────────────────────────────────────────────────
+  const canChangeStatus = (status) => status === "DRAFT" || status === "APPROVED";
+  const canGRN = (status) => status === "APPROVED" || status === "PARTIALLY_RECEIVED";
+  const canPay = (status) => status === "PARTIALLY_RECEIVED" || status === "FULLY_RECEIVED";
+
+  const handleStatusChange = async (po, newStatus) => {
+    try { await updatePurchaseOrderStatus(po.id, newStatus); loadAll(); }
+    catch (e) { setError(e.response?.data?.message || "Failed to update status"); }
+  };
+
+  return (
+    <MainLayout>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <h2 style={{ margin: 0, fontSize: "20px", color: t.text }}>Purchase Orders</h2>
+        <button style={ps.btnPrimary} onClick={() => setView("new")}>+ New PO</button>
+      </div>
+
+      {error && <div style={ps.alertError}>{error}</div>}
+
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", overflow: "hidden" }}>
+        <table style={s.table}>
+          <thead><tr style={s.thead}>
+            <th style={s.th}>PO Number</th>
+            <th style={s.th}>Date</th>
+            <th style={s.th}>Supplier</th>
+            <th style={s.th}>Total Bill</th>
+            <th style={s.th}>Total Paid</th>
+            <th style={s.th}>To Be Paid</th>
+            <th style={s.th}>Status</th>
+            <th style={s.th}>GRN Status</th>
+            <th style={s.th}>Pay</th>
+          </tr></thead>
+          <tbody>
+            {orders.length === 0 && (
+              <tr><td colSpan={9} style={{ ...s.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No purchase orders yet</td></tr>
+            )}
+            {orders.map(o => {
+              const totalBill = o.totalAmount || 0;
+              const totalPaid = o.totalPaid || 0;
+              const toBePaid = o.toBePaid ?? (totalBill - totalPaid);
+              return (
+                <tr key={o.id} style={{ ...s.tr, cursor: o.status === "DRAFT" ? "pointer" : "default" }}
+                  onClick={() => { if (o.status === "DRAFT") { setSelectedPO(o); setView("edit"); } }}>
+                  <td style={{ ...s.td, fontWeight: 600, color: "#2563eb" }}>{o.poNumber}</td>
+                  <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{o.orderDate}</td>
+                  <td style={s.td}>{o.supplier?.name}</td>
+                  <td style={{ ...s.td, fontWeight: 600 }}>Rs.{totalBill.toFixed(2)}</td>
+                  <td style={s.td}>Rs.{totalPaid.toFixed(2)}</td>
+                  <td style={{ ...s.td, fontWeight: 600, color: toBePaid > 0 ? "#ef4444" : "#16a34a" }}>Rs.{toBePaid.toFixed(2)}</td>
+
+                  {/* Status column */}
+                  <td style={s.td} onClick={e => e.stopPropagation()}>
+                    {canChangeStatus(o.status) ? (
+                      <select
+                        style={{ padding: "4px 8px", borderRadius: "6px", border: `1px solid ${t.border}`, background: t.inputBg, color: t.text, fontSize: "12px", cursor: "pointer" }}
+                        value={o.status}
+                        onChange={e => handleStatusChange(o, e.target.value)}>
+                        <option value="DRAFT">Draft</option>
+                        <option value="APPROVED">Approved</option>
+                        <option value="CANCELLED">Cancelled</option>
+                      </select>
+                    ) : (
+                      <span style={{ padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, background: STATUS_COLORS[o.status] + "22", color: STATUS_COLORS[o.status] }}>
+                        {STATUS_LABELS[o.status] || o.status}
+                      </span>
+                    )}
+                  </td>
+
+                  {/* GRN Status column */}
+                  <td style={s.td} onClick={e => e.stopPropagation()}>
+                    {o.status === "CANCELLED" ? (
+                      <span style={{ color: "#9ca3af", fontSize: "12px" }}>—</span>
+                    ) : (
+                      <button
+                        style={{ padding: "3px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, border: "none", cursor: canGRN(o.status) ? "pointer" : "default", background: GRN_STATUS_COLORS[o.status] + "22", color: GRN_STATUS_COLORS[o.status] }}
+                        onClick={() => { if (canGRN(o.status)) { setSelectedPO(o); setView("grn"); } }}>
+                        {GRN_STATUS_LABELS[o.status]}
+                      </button>
+                    )}
+                  </td>
+
+                  {/* Pay column */}
+                  <td style={s.td} onClick={e => e.stopPropagation()}>
+                    {canPay(o.status) && toBePaid > 0 ? (
+                      <button style={{ ...ps.btnSmSuccess }}
+                        onClick={() => { setSelectedPO(o); setView("pay"); }}>
+                        Pay
+                      </button>
+                    ) : (
+                      <span style={{ color: "#9ca3af", fontSize: "12px" }}>—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </MainLayout>
+  );
+}

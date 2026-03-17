@@ -18,6 +18,9 @@ public class InvoiceItem {
 
     private BigDecimal totalPrice;
 
+    // COGS: weighted average cost from FIFO batch consumption
+    private BigDecimal costPrice;
+
     @ManyToOne
     @JoinColumn(name = "invoice_id")
     private Invoice invoice;
@@ -70,5 +73,13 @@ public class InvoiceItem {
 
     public void setProduct(Product product) {
         this.product = product;
+    }
+
+    public BigDecimal getCostPrice() {
+        return costPrice;
+    }
+
+    public void setCostPrice(BigDecimal costPrice) {
+        this.costPrice = costPrice;
     }
 }

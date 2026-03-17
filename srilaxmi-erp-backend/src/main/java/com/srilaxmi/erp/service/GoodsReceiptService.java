@@ -1,5 +1,6 @@
 package com.srilaxmi.erp.service;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,7 @@ import com.srilaxmi.erp.entity.PurchaseOrderItem;
 import com.srilaxmi.erp.entity.PurchaseOrderStatus;
 import com.srilaxmi.erp.repository.GoodsReceiptItemRepository;
 import com.srilaxmi.erp.repository.GoodsReceiptRepository;
+import com.srilaxmi.erp.repository.PriceListRepository;
 import com.srilaxmi.erp.repository.PurchaseOrderItemRepository;
 import com.srilaxmi.erp.repository.PurchaseOrderRepository;
 
@@ -24,6 +26,7 @@ public class GoodsReceiptService {
     @Autowired private StockBatchService stockBatchService;
     @Autowired private PurchaseOrderRepository purchaseOrderRepository;
     @Autowired private PurchaseOrderItemRepository purchaseOrderItemRepository;
+    @Autowired private PriceListRepository priceListRepository;
 
     @Transactional
     public GoodsReceipt saveGRN(GoodsReceipt grn) {
@@ -35,15 +38,43 @@ public class GoodsReceiptService {
                     throw new IllegalArgumentException("GRN item must have a product");
                 item.setGoodsReceipt(grn);
 
-                stockBatchService.addStock(item.getProduct(), item.getQuantity(), item.getPurchasePrice());
-
-                // Update received quantity on PO item if linked
+                // Enforce: cannot receive more than ordered
                 if (item.getPurchaseOrderItem() != null && item.getPurchaseOrderItem().getId() != null) {
                     PurchaseOrderItem poItem = purchaseOrderItemRepository
                         .findById(item.getPurchaseOrderItem().getId())
                         .orElseThrow(() -> new RuntimeException("Purchase Order Item not found"));
-                    poItem.setReceivedQuantity(poItem.getReceivedQuantity() + item.getQuantity());
+
+                    int alreadyReceived = poItem.getReceivedQuantity();
+                    int ordered = poItem.getQuantity();
+                    int newTotal = alreadyReceived + item.getQuantity();
+
+                    if (newTotal > ordered) {
+                        throw new IllegalStateException(
+                            "Cannot receive " + item.getQuantity() + " units — only " +
+                            (ordered - alreadyReceived) + " remaining to receive for product: " +
+                            (item.getProduct().getName() != null ? item.getProduct().getName() : item.getProduct().getId())
+                        );
+                    }
+
+                // Look up current selling price for this product from price list
+                    double sellingPrice = priceListRepository
+                        .findFirstByProductIdAndValidFromLessThanEqualAndActiveTrueOrderByValidFromDesc(
+                            item.getProduct().getId(), LocalDate.now())
+                        .map(pl -> pl.getBasePrice().doubleValue())
+                        .orElse(0.0);
+
+                    stockBatchService.addStock(item.getProduct(), item.getQuantity(), item.getPurchasePrice(), sellingPrice);
+
+                    poItem.setReceivedQuantity(newTotal);
                     purchaseOrderItemRepository.save(poItem);
+                } else {
+                    double sellingPrice = priceListRepository
+                        .findFirstByProductIdAndValidFromLessThanEqualAndActiveTrueOrderByValidFromDesc(
+                            item.getProduct().getId(), LocalDate.now())
+                        .map(pl -> pl.getBasePrice().doubleValue())
+                        .orElse(0.0);
+
+                    stockBatchService.addStock(item.getProduct(), item.getQuantity(), item.getPurchasePrice(), sellingPrice);
                 }
             }
         }

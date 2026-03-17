@@ -53,6 +53,9 @@ public class PurchaseOrder {
     @Transient
     private BigDecimal amountPaid;
 
+    @Transient
+    private BigDecimal toBePaid;
+
     public PurchaseOrder(){}
 
     public Long getId() {
@@ -137,5 +140,13 @@ public class PurchaseOrder {
 
     public void setAmountPaid(BigDecimal amountPaid) {
         this.amountPaid = amountPaid;
+    }
+
+    public BigDecimal getToBePaid() {
+        return toBePaid;
+    }
+
+    public void setToBePaid(BigDecimal toBePaid) {
+        this.toBePaid = toBePaid;
     }
 }

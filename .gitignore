@@ -1,54 +1,52 @@
-HELP.md
+# ── Maven / Spring Boot ───────────────────────────────────────────────────────
 target/
-.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
 
-### STS ###
-.apt_generated
+# Maven wrapper
+.mvn/wrapper/maven-wrapper.jar
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+.eclipse/
+.settings/
 .classpath
-.factorypath
 .project
-.settings
+.factorypath
+*.launch
 .springBeans
 .sts4-cache
 
-### IntelliJ IDEA ###
-.idea
-*.iws
-*.iml
-*.ipr
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-### VS Code ###
+# VS Code
 .vscode/
 
-### Frontend ###
+# ── Secrets / Config ──────────────────────────────────────────────────────────
+src/main/resources/application.properties
+!src/main/resources/application.properties.example
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+spring.log
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Frontend (Node) ───────────────────────────────────────────────────────────
 SriLaxmiAgencies/node_modules/
 SriLaxmiAgencies/dist/
 SriLaxmiAgencies/.env
-SriLaxmiAgencies/build.log
-SriLaxmiAgencies/build_nocolor.log
-SriLaxmiAgencies/lint_log.txt
-SriLaxmiAgencies/DashboardController.txt
+SriLaxmiAgencies/.env.local
+SriLaxmiAgencies/.env.production
 
-### Environment ###
-*.env
-.env.local
-.env.production
-
-# Protect real DB credentials — use application.properties.template instead
-src/main/resources/application.properties
-
-### OS ###
-.DS_Store
-Thumbs.db
+# ── Kiro IDE ─────────────────────────────────────────────────────────────────
+.kiro/

@@ -5,7 +5,6 @@ import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
-
 @Entity
 @Table(name = "sales_orders")
 public class SalesOrder {
@@ -38,6 +37,14 @@ public class SalesOrder {
 
     // Customer-agreed final price (round figure). Null means use totalAmount.
     private BigDecimal finalAmount;
+
+    // Who created this order (username of logged-in user)
+    private String createdBy;
+
+    // Staff member who generated this bill (optional, selected at creation)
+    @ManyToOne
+    @JoinColumn(name = "created_by_staff_id")
+    private Staff createdByStaff;
 
     private boolean active = true;
 
@@ -125,6 +132,22 @@ public class SalesOrder {
 
     public void setFinalAmount(BigDecimal finalAmount) {
         this.finalAmount = finalAmount;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String createdBy) {
+        this.createdBy = createdBy;
+    }
+
+    public Staff getCreatedByStaff() {
+        return createdByStaff;
+    }
+
+    public void setCreatedByStaff(Staff createdByStaff) {
+        this.createdByStaff = createdByStaff;
     }
 
     /** Returns finalAmount if set, otherwise totalAmount. Use this for invoicing/payment. */

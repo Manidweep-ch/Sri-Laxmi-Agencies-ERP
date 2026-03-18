@@ -13,6 +13,11 @@ export const updatePurchaseOrderStatus = async (id, status) =>
 export const receiveStockForPO = async (id, grn) => (await api.post(`/purchase-orders/${id}/receive`, grn)).data;
 export const getGRNsForPO = async (id) => (await api.get(`/purchase-orders/${id}/grns`)).data;
 export const getSupplierPayments = async (poId) => (await api.get(`/purchase-orders/${poId}/payments`)).data;
-export const recordSupplierPayment = async (poId, payment) => (await api.post(`/purchase-orders/${poId}/payments`, payment)).data;
+export const recordSupplierPayment = async (payment) => (await api.post(`/purchase-orders/${payment.purchaseOrderId}/payments`, payment)).data;
 export const getSupplierTotalPaid = async (poId) => (await api.get(`/purchase-orders/${poId}/payments/total-paid`)).data;
 export const getPaymentSummary = async (poId) => (await api.get(`/purchase-orders/${poId}/payment-summary`)).data;
+
+// Smart ordering
+export const reorderFromPO = async (id) => (await api.post(`/purchase-orders/${id}/reorder`)).data;
+export const getProductsByBrand = async (brandId) => (await api.get(`/purchase-orders/products-by-brand/${brandId}`)).data;
+export const getProductsByCategory = async (categoryId) => (await api.get(`/purchase-orders/products-by-category/${categoryId}`)).data;

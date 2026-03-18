@@ -12,10 +12,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.srilaxmi.erp.service.*;
 import com.srilaxmi.erp.entity.Invoice;
-import com.srilaxmi.erp.entity.Payment;
 import com.srilaxmi.erp.repository.PaymentRepository;
 import com.srilaxmi.erp.repository.SupplierPaymentRepository;
 import com.srilaxmi.erp.repository.SalesReturnRefundRepository;
+
+import com.srilaxmi.erp.repository.SalaryPaymentRepository;
+import com.srilaxmi.erp.repository.CashDepositRepository;
 
 @RestController
 @RequestMapping("/api/dashboard")
@@ -54,6 +56,12 @@ public class DashboardController {
     @Autowired
     private SalesReturnRefundRepository salesReturnRefundRepository;
 
+    @Autowired
+    private SalaryPaymentRepository salaryPaymentRepository;
+
+    @Autowired
+    private CashDepositRepository cashDepositRepository;
+
     @GetMapping
     public Map<String, Object> getDashboardData() {
         Map<String, Object> dashboard = new HashMap<>();
@@ -75,11 +83,7 @@ public class DashboardController {
             .reduce(BigDecimal.ZERO, BigDecimal::add);
         dashboard.put("totalRevenue", totalRevenue);
 
-        List<Payment> payments = paymentService.getAllPayments();
-        BigDecimal totalPayments = payments.stream()
-            .map(Payment::getAmount)
-            .filter(java.util.Objects::nonNull)
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalPayments = paymentRepository.sumAll();
         dashboard.put("totalPayments", totalPayments);
 
         BigDecimal pendingPayments = totalRevenue.subtract(totalPayments);
@@ -124,9 +128,9 @@ public class DashboardController {
             .map(Invoice::getTotalAmount).filter(java.util.Objects::nonNull)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal totalReceived = paymentRepository.findAll().stream()
-            .map(Payment::getAmount).filter(java.util.Objects::nonNull)
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalReceived = paymentRepository.sumAll();
+        BigDecimal unassignedPayments = paymentRepository.sumUnassigned();
+        BigDecimal assignedToStaff = paymentRepository.sumAssigned();
 
         // Total to pay suppliers (PO)
         BigDecimal totalPOAmount = purchaseOrderService.getAllPO().stream()
@@ -143,12 +147,34 @@ public class DashboardController {
         BigDecimal totalRefundsPaid = salesReturnRefundRepository.findAll().stream()
             .map(r -> r.getAmount() != null ? r.getAmount() : BigDecimal.ZERO)
             .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal walletBalance = totalReceived.subtract(totalPOPaid).subtract(totalRefundsPaid);
+
+        // Total salary paid to staff
+        BigDecimal totalSalaryPaid = salaryPaymentRepository.findAll().stream()
+            .map(s -> s.getAmount() != null ? s.getAmount() : BigDecimal.ZERO)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Company wallet inflow = all transfers from staff/admin wallets to company
+        BigDecimal companyInflow = cashDepositRepository.sumAll();
+
+        // Money still held by staff = payments assigned to staff - already transferred to company
+        BigDecimal totalStaffHolding = assignedToStaff.subtract(companyInflow);
+        if (totalStaffHolding.compareTo(BigDecimal.ZERO) < 0) totalStaffHolding = BigDecimal.ZERO;
+
+        // Company wallet balance = inflow - outflows
+        BigDecimal walletBalance = companyInflow
+            .subtract(totalPOPaid)
+            .subtract(totalRefundsPaid)
+            .subtract(totalSalaryPaid);
 
         wallet.put("totalToReceive", toReceive.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : toReceive);
         wallet.put("totalToPay", toPay.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : toPay);
         wallet.put("totalReceived", totalReceived);
+        wallet.put("unassignedPayments", unassignedPayments);
+        wallet.put("assignedToStaff", assignedToStaff);
+        wallet.put("companyInflow", companyInflow);
+        wallet.put("totalStaffHolding", totalStaffHolding);
         wallet.put("totalPaid", totalPOPaid);
+        wallet.put("totalSalaryPaid", totalSalaryPaid);
         wallet.put("walletBalance", walletBalance);
 
         return wallet;

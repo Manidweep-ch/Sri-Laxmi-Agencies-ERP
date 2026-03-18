@@ -20,6 +20,10 @@ public class User {
     @JoinColumn(name = "role_id")
     private Role role;
 
+    // Transient — used only for linking staff during user update, not persisted
+    @jakarta.persistence.Transient
+    private Long staffId;
+
     public User(){}
 
     public Long getId() {
@@ -57,4 +61,7 @@ public class User {
     public void setRole(Role role) {
         this.role = role;
     }
+
+    public Long getStaffId() { return staffId; }
+    public void setStaffId(Long staffId) { this.staffId = staffId; }
 }

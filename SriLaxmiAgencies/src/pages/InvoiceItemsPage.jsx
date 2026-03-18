@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import MainLayout from "../layout/MainLayout";
-import { getInvoiceItems, createInvoiceItem } from "../services/invoiceItemService";
+import { getInvoiceItems, createInvoiceItem } from "../services/invoiceService";
 import { getProducts } from "../services/productService";
 
 function InvoiceItemsPage() {

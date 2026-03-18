@@ -16,6 +16,7 @@ public class InvoiceSummary {
     private Long salesOrderId;
     private Long purchaseOrderId;
     private String supplierName;
+    private String createdBy; // who created the linked SO/PO
 
     public InvoiceSummary() {}
 
@@ -57,4 +58,7 @@ public class InvoiceSummary {
 
     public String getSupplierName() { return supplierName; }
     public void setSupplierName(String supplierName) { this.supplierName = supplierName; }
+
+    public String getCreatedBy() { return createdBy; }
+    public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
 }

@@ -1,9 +1,11 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useState, useCallback } from "react";
 import MainLayout from "../layout/MainLayout";
 import api from "../api/axiosConfig";
 import { usePageStyles } from "../hooks/usePageStyles";
 import { useTheme } from "../context/ThemeContext";
 import { getTheme } from "../theme";
+import { getFollowUpByInvoice, createFollowUp } from "../services/followUpService";
+import { getStaff } from "../services/staffService";
 
 function BarChart({ data, colorFn, height = 140, labelKey = "label", valueKey = "value" }) {
   const { dark } = useTheme();
@@ -101,6 +103,272 @@ const SC = {
   FULLY_RECEIVED: "#16a34a", PARTIALLY_RECEIVED: "#f59e0b", ORDERED: "#2563eb",
 };
 
+// ── Aging Report Tab ─────────────────────────────────────────────────────────
+const BUCKET_COLORS = {
+  "Current":    "#16a34a",
+  "1-30 days":  "#f59e0b",
+  "31-60 days": "#f97316",
+  "61-90 days": "#ef4444",
+  "90+ days":   "#7f1d1d",
+};
+
+function AssignFollowUpModal({ inv, staff, onClose, onSaved }) {
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const [staffId, setStaffId] = useState("");
+  const [nextDate, setNextDate] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSave = async () => {
+    if (!staffId) { setError("Please select a staff member"); return; }
+    setSaving(true);
+    try {
+      await createFollowUp({ invoiceId: inv.invoiceId, staffId: Number(staffId), nextFollowUpDate: nextDate || null });
+      onSaved();
+    } catch (e) {
+      setError(e?.response?.data?.message || "Failed to assign follow-up");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "12px", padding: "24px", width: "360px", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+        <div style={{ fontSize: "16px", fontWeight: 800, color: t.text, marginBottom: "4px" }}>Assign Follow-Up</div>
+        <div style={{ fontSize: "12px", color: t.textSub, marginBottom: "16px" }}>
+          {inv.invoiceNumber} · {inv.customerName} · <span style={{ color: "#ef4444", fontWeight: 700 }}>₹{parseFloat(inv.outstandingAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+        </div>
+        {error && <div style={{ background: "#fee2e2", color: "#b91c1c", padding: "8px 12px", borderRadius: "6px", fontSize: "12px", marginBottom: "12px" }}>{error}</div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+          <div>
+            <label style={{ fontSize: "11px", color: t.textSub, fontWeight: 600 }}>Assign To *</label>
+            <select value={staffId} onChange={e => setStaffId(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "13px", background: t.inputBg, color: t.text, marginTop: "4px" }}>
+              <option value="">Select staff...</option>
+              {staff.map(s => <option key={s.id} value={s.id}>{s.name} — {s.designation}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: "11px", color: t.textSub, fontWeight: 600 }}>Next Follow-Up Date</label>
+            <input type="date" value={nextDate} onChange={e => setNextDate(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "13px", background: t.inputBg, color: t.text, marginTop: "4px", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+            <button onClick={handleSave} disabled={saving}
+              style={{ flex: 1, padding: "9px", background: "#2563eb", color: "#fff", border: "none", borderRadius: "6px", fontSize: "13px", cursor: "pointer", fontWeight: 700 }}>
+              {saving ? "Saving..." : "Assign"}
+            </button>
+            <button onClick={onClose}
+              style={{ flex: 1, padding: "9px", background: "none", border: `1px solid ${t.border}`, borderRadius: "6px", fontSize: "13px", cursor: "pointer", color: t.textSub }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgingTab({ aging, ps, t, fmt }) {
+  const [search, setSearch] = useState("");
+  const [bucket, setBucket] = useState("");
+  const [followUps, setFollowUps] = useState({});   // invoiceId -> followUp
+  const [staff, setStaff] = useState([]);
+  const [assignModal, setAssignModal] = useState(null); // inv object
+
+  useEffect(() => {
+    getStaff().then(setStaff).catch(() => {});
+  }, []);
+
+  const loadFollowUps = useCallback(async (invoices) => {
+    const results = {};
+    await Promise.all((invoices || []).map(async inv => {
+      try {
+        const fu = await getFollowUpByInvoice(inv.invoiceId);
+        if (fu) results[inv.invoiceId] = fu;
+      } catch {}
+    }));
+    setFollowUps(results);
+  }, []);
+
+  useEffect(() => {
+    if (aging.invoices?.length) loadFollowUps(aging.invoices);
+  }, [aging.invoices, loadFollowUps]);
+
+  const grandTotal = parseFloat(aging.grandTotal || 0);
+  const q = search.toLowerCase();
+
+  const filtered = (aging.invoices || []).filter(inv =>
+    (!bucket || inv.bucket === bucket) &&
+    (!q ||
+      (inv.invoiceNumber || "").toLowerCase().includes(q) ||
+      (inv.customerName || "").toLowerCase().includes(q) ||
+      (inv.customerPhone || "").toLowerCase().includes(q))
+  );
+
+  return (
+    <div>
+      {/* As-of header */}
+      <div style={{ fontSize: "12px", color: t.textSub, marginBottom: "16px" }}>
+        As of: <span style={{ fontWeight: 700, color: t.text }}>{aging.asOf}</span>
+        &nbsp;·&nbsp; {aging.totalInvoices} unpaid invoices
+        &nbsp;·&nbsp; Total outstanding: <span style={{ fontWeight: 700, color: "#ef4444" }}>{fmt(aging.grandTotal)}</span>
+      </div>
+
+      {/* Bucket summary cards — clickable to filter */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "10px", marginBottom: "24px" }}>
+        {(aging.summary || []).map(b => {
+          const color = BUCKET_COLORS[b.bucket] || "#6b7280";
+          const pct = grandTotal > 0 ? ((parseFloat(b.total || 0) / grandTotal) * 100).toFixed(1) : 0;
+          const isActive = bucket === b.bucket;
+          return (
+            <div key={b.bucket} onClick={() => setBucket(isActive ? "" : b.bucket)}
+              style={{ background: t.surface, border: `2px solid ${isActive ? color : color + "44"}`,
+                borderRadius: "10px", padding: "14px", cursor: "pointer",
+                boxShadow: isActive ? `0 0 0 3px ${color}33` : "none", transition: "all 0.15s" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color, marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                {b.bucket}
+              </div>
+              <div style={{ fontSize: "18px", fontWeight: 800, color }}>{fmt(b.total)}</div>
+              <div style={{ fontSize: "11px", color: t.textSub, marginTop: "4px" }}>
+                {b.count} invoice{b.count !== 1 ? "s" : ""} · {pct}%
+              </div>
+              <div style={{ marginTop: "8px", height: "4px", background: t.border, borderRadius: "2px" }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: "2px" }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Stacked distribution bar */}
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "10px", padding: "16px", marginBottom: "20px" }}>
+        <div style={{ fontSize: "12px", fontWeight: 700, color: t.text, marginBottom: "10px" }}>Outstanding Distribution</div>
+        <div style={{ display: "flex", height: "20px", borderRadius: "6px", overflow: "hidden", gap: "2px" }}>
+          {(aging.summary || []).filter(b => parseFloat(b.total) > 0).map(b => {
+            const pct = grandTotal > 0 ? (parseFloat(b.total) / grandTotal) * 100 : 0;
+            return (
+              <div key={b.bucket} title={`${b.bucket}: ${fmt(b.total)}`}
+                style={{ width: `${pct}%`, background: BUCKET_COLORS[b.bucket] || "#6b7280", minWidth: pct > 0 ? "4px" : 0 }} />
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: "16px", marginTop: "8px", flexWrap: "wrap" }}>
+          {(aging.summary || []).map(b => (
+            <div key={b.bucket} style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "11px", color: t.textSub }}>
+              <div style={{ width: "10px", height: "10px", borderRadius: "2px", background: BUCKET_COLORS[b.bucket] || "#6b7280" }} />
+              {b.bucket}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: "10px", marginBottom: "14px", flexWrap: "wrap", alignItems: "center" }}>
+        <input style={{ padding: "7px 12px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "13px", background: t.inputBg, color: t.text, width: "240px" }}
+          placeholder="Search customer, invoice..." value={search} onChange={e => setSearch(e.target.value)} />
+        <select style={{ padding: "7px 12px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "13px", background: t.inputBg, color: t.text }}
+          value={bucket} onChange={e => setBucket(e.target.value)}>
+          <option value="">All Buckets</option>
+          {Object.keys(BUCKET_COLORS).map(b => <option key={b} value={b}>{b}</option>)}
+        </select>
+        {(search || bucket) && (
+          <button onClick={() => { setSearch(""); setBucket(""); }}
+            style={{ padding: "7px 12px", border: `1px solid ${t.border}`, borderRadius: "6px", fontSize: "12px", background: "none", cursor: "pointer", color: t.textSub }}>
+            Clear
+          </button>
+        )}
+        <span style={{ fontSize: "12px", color: t.textSub, marginLeft: "auto" }}>
+          {filtered.length} invoices · {fmt(filtered.reduce((s, i) => s + parseFloat(i.outstandingAmount || 0), 0))}
+        </span>
+      </div>
+
+      {/* Invoice table */}
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "10px", overflow: "hidden" }}>
+        <table style={ps.table}>
+          <thead><tr style={ps.thead}>
+            <th style={ps.th}>Invoice</th>
+            <th style={ps.th}>Customer</th>
+            <th style={ps.th}>Phone</th>
+            <th style={ps.th}>Invoice Date</th>
+            <th style={ps.th}>Due Date</th>
+            <th style={ps.th}>Days Overdue</th>
+            <th style={ps.th}>Total</th>
+            <th style={ps.th}>Paid</th>
+            <th style={ps.th}>Outstanding</th>
+            <th style={ps.th}>Bucket</th>
+            <th style={ps.th}>Follow-Up</th>
+          </tr></thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={11} style={{ ...ps.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>
+                No outstanding invoices
+              </td></tr>
+            )}
+            {filtered.map(inv => {
+              const color = BUCKET_COLORS[inv.bucket] || "#6b7280";
+              const fu = followUps[inv.invoiceId];
+              return (
+                <tr key={inv.invoiceId} style={ps.tr}>
+                  <td style={{ ...ps.td, fontWeight: 700, color: "#2563eb", fontSize: "12px" }}>{inv.invoiceNumber}</td>
+                  <td style={{ ...ps.td, fontWeight: 600 }}>{inv.customerName}</td>
+                  <td style={{ ...ps.tdSub, fontSize: "12px" }}>{inv.customerPhone || "—"}</td>
+                  <td style={ps.tdSub}>{inv.invoiceDate || "—"}</td>
+                  <td style={{ ...ps.tdSub, color: inv.daysOverdue > 0 ? "#ef4444" : t.textSub }}>{inv.dueDate || "—"}</td>
+                  <td style={{ ...ps.td, fontWeight: 700, color: inv.daysOverdue > 0 ? color : "#16a34a" }}>
+                    {inv.daysOverdue > 0 ? `${inv.daysOverdue}d` : "Current"}
+                  </td>
+                  <td style={ps.tdSub}>{fmt(inv.totalAmount)}</td>
+                  <td style={{ ...ps.td, color: "#16a34a" }}>{fmt(inv.paidAmount)}</td>
+                  <td style={{ ...ps.td, fontWeight: 700, color }}>{fmt(inv.outstandingAmount)}</td>
+                  <td style={ps.td}>
+                    <span style={{ padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700,
+                      background: color + "22", color }}>
+                      {inv.bucket}
+                    </span>
+                  </td>
+                  <td style={ps.td}>
+                    {fu ? (
+                      <div style={{ fontSize: "11px" }}>
+                        <div style={{ fontWeight: 600, color: "#2563eb" }}>{fu.assignedToName}</div>
+                        {fu.nextFollowUpDate && <div style={{ color: t.textSub }}>{fu.nextFollowUpDate}</div>}
+                      </div>
+                    ) : (
+                      <button onClick={() => setAssignModal(inv)}
+                        style={{ padding: "3px 10px", background: "#dbeafe", color: "#1d4ed8", border: "1px solid #93c5fd", borderRadius: "6px", fontSize: "11px", cursor: "pointer", fontWeight: 700, whiteSpace: "nowrap" }}>
+                        + Assign
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {filtered.length > 0 && (
+          <div style={{ padding: "10px 16px", borderTop: `1px solid ${t.border}`, fontSize: "12px", color: t.textSub, display: "flex", justifyContent: "space-between" }}>
+            <span>{filtered.length} invoices</span>
+            <span style={{ fontWeight: 700, color: "#ef4444" }}>
+              Total Outstanding: {fmt(filtered.reduce((s, i) => s + parseFloat(i.outstandingAmount || 0), 0))}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {assignModal && (
+        <AssignFollowUpModal
+          inv={assignModal}
+          staff={staff}
+          onClose={() => setAssignModal(null)}
+          onSaved={() => { setAssignModal(null); loadFollowUps(aging.invoices); }}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function ReportsPage() {
   const [tab, setTab] = useState("financial");
   const [financial, setFinancial] = useState(null);
@@ -108,6 +376,7 @@ export default function ReportsPage() {
   const [sales, setSales] = useState(null);
   const [purchase, setPurchase] = useState(null);
   const [profitMargin, setProfitMargin] = useState([]);
+  const [aging, setAging] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -120,14 +389,15 @@ export default function ReportsPage() {
     setLoading(true); setError("");
     try {
       const params = startDate && endDate ? `?startDate=${startDate}&endDate=${endDate}` : "";
-      const [f, inv, s, p, pm] = await Promise.all([
+      const [f, inv, s, p, pm, ag] = await Promise.all([
         api.get("/reports/financial").then(r => r.data),
         api.get("/reports/inventory").then(r => r.data),
         api.get(`/reports/sales${params}`).then(r => r.data),
         api.get(`/reports/purchase${params}`).then(r => r.data),
         api.get("/reports/profit-margin").then(r => r.data),
+        api.get("/reports/aging").then(r => r.data),
       ]);
-      setFinancial(f); setInventory(inv); setSales(s); setPurchase(p); setProfitMargin(pm);
+      setFinancial(f); setInventory(inv); setSales(s); setPurchase(p); setProfitMargin(pm); setAging(ag);
     } catch { setError("Failed to load reports"); }
     finally { setLoading(false); }
   };
@@ -167,7 +437,7 @@ export default function ReportsPage() {
       {loading && <div style={ps.alertInfo}>Loading reports...</div>}
 
       <div style={{ display: "flex", gap: "2px", marginBottom: "24px", borderBottom: `2px solid ${t.border}` }}>
-        {[["financial","💰 Financial"],["sales","📈 Sales"],["purchase","🛒 Purchase"],["inventory","📦 Inventory"],["profit","📊 Profit Margin"]].map(([key, label]) => (
+        {[["financial","💰 Financial"],["sales","📈 Sales"],["purchase","🛒 Purchase"],["inventory","📦 Inventory"],["profit","📊 Profit Margin"],["aging","⏳ Aging"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)} style={tabStyle(key)}>{label}</button>
         ))}
       </div>
@@ -432,6 +702,9 @@ export default function ReportsPage() {
           )}
         </div>
       )}
+      {/* AGING REPORT */}
+      {tab === "aging" && aging && <AgingTab aging={aging} ps={ps} t={t} fmt={fmt} />}
+
     </MainLayout>
   );
 }

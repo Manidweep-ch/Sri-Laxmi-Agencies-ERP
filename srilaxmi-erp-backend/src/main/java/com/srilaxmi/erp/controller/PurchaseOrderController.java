@@ -9,9 +9,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import com.srilaxmi.erp.entity.GoodsReceipt;
+import com.srilaxmi.erp.entity.Product;
 import com.srilaxmi.erp.entity.PurchaseOrder;
 import com.srilaxmi.erp.entity.PurchaseOrderItem;
 import com.srilaxmi.erp.entity.PurchaseOrderStatus;
+import com.srilaxmi.erp.repository.ProductRepository;
 import com.srilaxmi.erp.service.GoodsReceiptService;
 import com.srilaxmi.erp.service.PurchaseOrderService;
 import com.srilaxmi.erp.service.SupplierPaymentService;
@@ -23,6 +25,7 @@ public class PurchaseOrderController {
     @Autowired private PurchaseOrderService purchaseOrderService;
     @Autowired private GoodsReceiptService goodsReceiptService;
     @Autowired private SupplierPaymentService supplierPaymentService;
+    @Autowired private ProductRepository productRepository;
 
     @PostMapping
     public PurchaseOrder createPO(@RequestBody PurchaseOrder po) {
@@ -81,6 +84,30 @@ public class PurchaseOrderController {
     @GetMapping("/{id}/grns")
     public List<GoodsReceipt> getGRNsForPO(@PathVariable Long id) {
         return goodsReceiptService.getGRNsByPO(id);
+    }
+
+    // Reorder from existing PO — creates new DRAFT PO with same supplier + items
+    @PostMapping("/{id}/reorder")
+    public PurchaseOrder reorderFromPO(@PathVariable Long id) {
+        return purchaseOrderService.reorderFromPO(id);
+    }
+
+    // Get products by preferred supplier (for Order by Supplier flow)
+    @GetMapping("/products-by-supplier/{supplierId}")
+    public List<Product> getProductsBySupplier(@PathVariable Long supplierId) {
+        return productRepository.findByPreferredSupplierIdAndActiveTrue(supplierId);
+    }
+
+    // Get products by brand (for Order by Brand flow)
+    @GetMapping("/products-by-brand/{brandId}")
+    public List<Product> getProductsByBrand(@PathVariable Long brandId) {
+        return productRepository.findByBrandIdAndActiveTrue(brandId);
+    }
+
+    // Get products by category (for Order by Category flow)
+    @GetMapping("/products-by-category/{categoryId}")
+    public List<Product> getProductsByCategory(@PathVariable Long categoryId) {
+        return productRepository.findByCategoryIdAndActiveTrue(categoryId);
     }
 
     /**

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { login } from "../services/authService";
+import { useAuth } from "../context/AuthContext";
+import { ROLE_HOME } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { getTheme } from "../theme";
 
@@ -10,15 +12,16 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const { dark, toggle } = useTheme();
   const t = getTheme(dark);
+  const { login: authLogin } = useAuth();
 
   const handleLogin = async () => {
     if (!username.trim() || !password.trim()) { setError("Please enter both username and password"); return; }
     try {
       setLoading(true); setError("");
       const response = await login({ username, password });
-      localStorage.setItem("token", response.token);
-      localStorage.setItem("username", response.username);
-      window.location.href = "/dashboard";
+      authLogin(response);
+      const home = ROLE_HOME[response.role] || "/dashboard";
+      window.location.href = home;
     } catch { setError("Invalid username or password"); }
     finally { setLoading(false); }
   };

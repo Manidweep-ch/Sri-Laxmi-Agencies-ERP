@@ -4,10 +4,14 @@ import {
   getPurchaseOrders, createPurchaseOrder, getPurchaseOrderItems,
   addPurchaseOrderItem, updatePurchaseOrderItem, removePurchaseOrderItem,
   updatePurchaseOrderStatus, receiveStockForPO, getGRNsForPO,
-  recordSupplierPayment, getPaymentSummary
+  recordSupplierPayment, getPaymentSummary,
+  reorderFromPO, getProductsByBrand, getProductsByCategory
 } from "../services/purchaseService";
 import { getSuppliers } from "../services/supplierService";
 import { getProducts } from "../services/productService";
+import { getBrands } from "../services/brandService";
+import { getCategories } from "../services/categoryService";
+import { getStaff } from "../services/staffService";
 import { usePageStyles } from "../hooks/usePageStyles";
 import { getCurrentPrice } from "../services/priceService";
 import { useTheme } from "../context/ThemeContext";
@@ -77,6 +81,345 @@ function SearchDropdown({ placeholder, items, labelFn, onSelect, value, onChange
   );
 }
 
+// ── Staff selector dropdown ───────────────────────────────────────────────────
+function StaffDropdown({ staffList, value, onChange, placeholder = "Search staff..." }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const selected = staffList.find(s => s.id === value);
+  useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const filtered = staffList.filter(s =>
+    s.active !== false && (!query ||
+      s.name?.toLowerCase().includes(query.toLowerCase()) ||
+      s.employeeId?.toLowerCase().includes(query.toLowerCase()) ||
+      s.designation?.toLowerCase().includes(query.toLowerCase()))
+  );
+  const displayText = selected
+    ? `${selected.employeeId ? selected.employeeId + " · " : ""}${selected.name}`
+    : query;
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <input
+        style={{ width: "240px", padding: "7px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "13px", background: t.inputBg, color: t.text, boxSizing: "border-box" }}
+        placeholder={placeholder}
+        value={open ? query : (selected ? displayText : "")}
+        onFocus={() => { setOpen(true); setQuery(""); }}
+        onChange={e => { setQuery(e.target.value); onChange(null); setOpen(true); }}
+      />
+      {selected && !open && (
+        <button onClick={() => { onChange(null); setQuery(""); }}
+          style={{ position: "absolute", right: "6px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: "14px", padding: "0 2px" }}>✕</button>
+      )}
+      {open && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: t.surface, border: `1px solid ${t.border}`, borderRadius: "6px", zIndex: 200, maxHeight: "200px", overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+          {filtered.map(s => (
+            <div key={s.id}
+              style={{ padding: "8px 12px", cursor: "pointer", fontSize: "13px", color: t.text, borderBottom: `1px solid ${t.border}`, display: "flex", gap: "8px", alignItems: "center" }}
+              onMouseDown={() => { onChange(s.id); setOpen(false); setQuery(""); }}>
+              <span style={{ fontSize: "11px", color: "#2563eb", fontWeight: 600, minWidth: "60px" }}>{s.employeeId || "—"}</span>
+              <span style={{ fontWeight: 600 }}>{s.name}</span>
+              <span style={{ fontSize: "11px", color: t.textSub }}>({s.designation || "Staff"})</span>
+            </div>
+          ))}
+          {filtered.length === 0 && <div style={{ padding: "10px 12px", fontSize: "13px", color: "#9ca3af" }}>No staff found</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Reorder from Past PO Modal ────────────────────────────────────────────────
+function ReorderModal({ po, onClose, onCreated }) {
+  const ps = usePageStyles();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const s = { label: ps.label, input: ps.input, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td };
+
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    getPurchaseOrderItems(po.id)
+      .then(data => setItems(data.map(i => ({ ...i, newQty: String(i.quantity), newPrice: String(i.price) }))))
+      .catch(() => setError("Failed to load items"))
+      .finally(() => setFetching(false));
+  }, [po.id]);
+
+  const updateItem = (idx, field, val) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, [field]: val } : it));
+  const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
+
+  const subTotal = items.reduce((acc, i) => acc + (parseFloat(i.newPrice) || 0) * (parseInt(i.newQty) || 0), 0);
+  const totalTax = items.reduce((acc, i) => acc + (parseFloat(i.newPrice) || 0) * (parseInt(i.newQty) || 0) * ((i.product?.gst || 0) / 100), 0);
+
+  const handleCreate = async () => {
+    if (items.length === 0) { setError("Add at least one item"); return; }
+    for (const i of items) {
+      if (!i.newPrice || parseFloat(i.newPrice) <= 0) { setError(`Enter price for ${i.product?.name}`); return; }
+      if (!i.newQty || parseInt(i.newQty) <= 0) { setError(`Enter qty for ${i.product?.name}`); return; }
+    }
+    try {
+      setLoading(true); setError("");
+      await createPurchaseOrder({
+        supplier: { id: po.supplier?.id },
+        items: items.map(i => ({ product: { id: i.product?.id }, quantity: parseInt(i.newQty), price: parseFloat(i.newPrice) }))
+      });
+      onCreated();
+    } catch (e) { setError(e.response?.data?.message || "Failed to create PO"); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div style={ps.overlay} onClick={onClose}>
+      <div style={{ ...ps.modal, width: "720px" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+          <div>
+            <div style={{ fontSize: "16px", fontWeight: 700, color: t.text }}>↻ Reorder from PO</div>
+            <div style={{ fontSize: "12px", color: t.textSub, marginTop: "2px" }}>{po.poNumber} · {po.supplier?.name}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: t.textSub }}>✕</button>
+        </div>
+        {error && <div style={ps.alertError}>{error}</div>}
+        {fetching ? (
+          <div style={{ textAlign: "center", padding: "24px", color: t.textSub }}>Loading items...</div>
+        ) : (
+          <>
+            <table style={s.table}>
+              <thead><tr style={s.thead}>
+                <th style={s.th}>Product</th>
+                <th style={s.th}>GST %</th>
+                <th style={s.th}>Price (Rs.) *</th>
+                <th style={s.th}>Qty *</th>
+                <th style={s.th}>Total</th>
+                <th style={s.th}></th>
+              </tr></thead>
+              <tbody>
+                {items.length === 0 && <tr><td colSpan={6} style={{ ...s.td, textAlign: "center", color: "#9ca3af" }}>No items</td></tr>}
+                {items.map((item, idx) => {
+                  const price = parseFloat(item.newPrice) || 0;
+                  const qty = parseInt(item.newQty) || 0;
+                  const gst = item.product?.gst || 0;
+                  const total = price * qty * (1 + gst / 100);
+                  return (
+                    <tr key={idx} style={s.tr}>
+                      <td style={s.td}>{item.product?.name}{item.product?.size ? ` - ${item.product.size}` : ""}</td>
+                      <td style={s.td}>{gst}%</td>
+                      <td style={s.td}><input style={{ ...s.input, width: "100px" }} type="number" min="0" value={item.newPrice} onChange={e => updateItem(idx, "newPrice", e.target.value)} /></td>
+                      <td style={s.td}><input style={{ ...s.input, width: "70px" }} type="number" min="1" value={item.newQty} onChange={e => updateItem(idx, "newQty", e.target.value)} /></td>
+                      <td style={{ ...s.td, fontWeight: 600 }}>Rs.{total.toFixed(2)}</td>
+                      <td style={s.td}><button style={ps.btnSmDanger} onClick={() => removeItem(idx)}>✕</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ display: "flex", justifyContent: "flex-end", margin: "12px 0" }}>
+              <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "10px 16px", minWidth: "220px" }}>
+                <div style={ps.totalRow}><span>Sub Total</span><span>Rs.{subTotal.toFixed(2)}</span></div>
+                <div style={ps.totalRow}><span>Total GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
+                <div style={{ ...ps.totalRow, fontWeight: 700, borderTop: `1px solid ${t.border}`, paddingTop: "6px", marginTop: "4px" }}>
+                  <span>Grand Total</span><span>Rs.{(subTotal + totalTax).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <button style={ps.btnGhost} onClick={onClose}>Cancel</button>
+              <button style={ps.btnSuccess} onClick={handleCreate} disabled={loading || items.length === 0}>
+                {loading ? "Creating..." : "Create Draft PO"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Order by Brand / Category Modal ──────────────────────────────────────────
+function SupplierBrandOrderModal({ suppliers, brands, categories, onClose, onCreated }) {
+  const ps = usePageStyles();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const s = { label: ps.label, input: ps.input, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td };
+
+  const [mode, setMode] = useState("brand"); // "brand" | "category"
+  const [brandSearch, setBrandSearch] = useState("");
+  const [categorySearch, setCategorySearch] = useState("");
+  const [supplierSearch, setSupplierSearch] = useState("");
+  const [selectedBrand, setSelectedBrand] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [selectedSupplier, setSelectedSupplier] = useState(null);
+  const [lines, setLines] = useState([]);
+  const [fetching, setFetching] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadProducts = async (type, item) => {
+    if (!item) { setLines([]); return; }
+    setFetching(true); setError("");
+    try {
+      const prods = type === "brand"
+        ? await getProductsByBrand(item.id)
+        : await getProductsByCategory(item.id);
+      setLines(prods.map(p => ({ productId: p.id, productName: p.name, size: p.size, gst: p.gst || 0, hsnCode: p.hsnCode || "-", costPrice: "", qty: "" })));
+    } catch { setError("Failed to load products"); }
+    finally { setFetching(false); }
+  };
+
+  const updateLine = (idx, field, val) => setLines(prev => prev.map((l, i) => i === idx ? { ...l, [field]: val } : l));
+  const removeLine = (idx) => setLines(prev => prev.filter((_, i) => i !== idx));
+
+  const activeLines = lines.filter(l => l.qty && parseInt(l.qty) > 0);
+  const subTotal = activeLines.reduce((acc, l) => acc + (parseFloat(l.costPrice) || 0) * (parseInt(l.qty) || 0), 0);
+  const totalTax = activeLines.reduce((acc, l) => acc + (parseFloat(l.costPrice) || 0) * (parseInt(l.qty) || 0) * (l.gst / 100), 0);
+
+  const handleCreate = async () => {
+    if (!selectedSupplier) { setError("Select a supplier for this PO"); return; }
+    if (activeLines.length === 0) { setError("Enter qty > 0 for at least one product"); return; }
+    for (const l of activeLines) {
+      if (!l.costPrice || parseFloat(l.costPrice) <= 0) { setError(`Enter price for ${l.productName}`); return; }
+    }
+    try {
+      setLoading(true); setError("");
+      await createPurchaseOrder({
+        supplier: { id: selectedSupplier.id },
+        items: activeLines.map(l => ({ product: { id: l.productId }, quantity: parseInt(l.qty), price: parseFloat(l.costPrice) }))
+      });
+      onCreated();
+    } catch (e) { setError(e.response?.data?.message || "Failed to create PO"); }
+    finally { setLoading(false); }
+  };
+
+  const resetMode = (newMode) => {
+    setMode(newMode);
+    setLines([]);
+    setSelectedBrand(null);
+    setSelectedCategory(null);
+    setBrandSearch("");
+    setCategorySearch("");
+  };
+
+  return (
+    <div style={ps.overlay} onClick={onClose}>
+      <div style={{ ...ps.modal, width: "820px" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div style={{ fontSize: "16px", fontWeight: 700, color: t.text }}>📦 Order by Brand / Category</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: t.textSub }}>✕</button>
+        </div>
+
+        {/* Mode toggle */}
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+          {[["brand", "By Brand"], ["category", "By Category"]].map(([m, label]) => (
+            <button key={m} style={ps.filterPill(mode === m, "#2563eb")} onClick={() => resetMode(m)}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+          {/* Brand or Category picker */}
+          <div>
+            <label style={s.label}>{mode === "brand" ? "Select Brand" : "Select Category"} *</label>
+            <div style={{ marginTop: "6px" }}>
+              {mode === "brand" ? (
+                <SearchDropdown placeholder="Search brand..." items={brands} labelFn={b => b.name}
+                  value={brandSearch} onChange={setBrandSearch}
+                  onSelect={b => { setBrandSearch(b ? b.name : ""); setSelectedBrand(b); loadProducts("brand", b); }} />
+              ) : (
+                <SearchDropdown placeholder="Search category..." items={categories} labelFn={c => c.name}
+                  value={categorySearch} onChange={setCategorySearch}
+                  onSelect={c => { setCategorySearch(c ? c.name : ""); setSelectedCategory(c); loadProducts("category", c); }} />
+              )}
+            </div>
+          </div>
+
+          {/* Supplier picker — always required */}
+          <div>
+            <label style={s.label}>Supplier *</label>
+            <div style={{ marginTop: "6px" }}>
+              <SearchDropdown placeholder="Search supplier..." items={suppliers} labelFn={sup => sup.name}
+                value={supplierSearch} onChange={setSupplierSearch}
+                onSelect={sup => { setSupplierSearch(sup ? sup.name : ""); setSelectedSupplier(sup); }} />
+            </div>
+            {!selectedSupplier && <div style={{ fontSize: "11px", color: t.textSub, marginTop: "4px" }}>Required to generate the PO</div>}
+          </div>
+        </div>
+
+        {error && <div style={ps.alertError}>{error}</div>}
+        {fetching && <div style={{ textAlign: "center", padding: "20px", color: t.textSub }}>Loading products...</div>}
+
+        {!fetching && lines.length > 0 && (
+          <>
+            <div style={{ fontSize: "12px", color: t.textSub, marginBottom: "8px" }}>
+              {lines.length} products — fill qty and price for what you need. Leave qty 0 to skip.
+            </div>
+            <div style={{ maxHeight: "320px", overflowY: "auto", border: `1px solid ${t.border}`, borderRadius: "8px" }}>
+              <table style={s.table}>
+                <thead><tr style={s.thead}>
+                  <th style={s.th}>Product</th>
+                  <th style={s.th}>GST %</th>
+                  <th style={s.th}>Price (Rs.)</th>
+                  <th style={s.th}>Qty</th>
+                  <th style={s.th}>Total</th>
+                  <th style={s.th}></th>
+                </tr></thead>
+                <tbody>
+                  {lines.map((line, idx) => {
+                    const price = parseFloat(line.costPrice) || 0;
+                    const qty = parseInt(line.qty) || 0;
+                    const total = price * qty * (1 + line.gst / 100);
+                    return (
+                      <tr key={idx} style={{ ...s.tr, opacity: qty === 0 ? 0.5 : 1 }}>
+                        <td style={s.td}>{line.productName}{line.size ? ` - ${line.size}` : ""}</td>
+                        <td style={s.td}>{line.gst}%</td>
+                        <td style={s.td}><input style={{ ...s.input, width: "100px" }} type="number" min="0" placeholder="0.00" value={line.costPrice} onChange={e => updateLine(idx, "costPrice", e.target.value)} /></td>
+                        <td style={s.td}><input style={{ ...s.input, width: "70px" }} type="number" min="0" placeholder="0" value={line.qty} onChange={e => updateLine(idx, "qty", e.target.value)} /></td>
+                        <td style={{ ...s.td, fontWeight: qty > 0 ? 600 : "normal", color: qty > 0 ? t.text : t.textSub }}>
+                          {qty > 0 ? `Rs.${total.toFixed(2)}` : "—"}
+                        </td>
+                        <td style={s.td}><button style={ps.btnSmDanger} onClick={() => removeLine(idx)}>✕</button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {activeLines.length > 0 && (
+              <div style={{ display: "flex", justifyContent: "flex-end", margin: "12px 0" }}>
+                <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "10px 16px", minWidth: "220px" }}>
+                  <div style={ps.totalRow}><span>Sub Total ({activeLines.length} items)</span><span>Rs.{subTotal.toFixed(2)}</span></div>
+                  <div style={ps.totalRow}><span>Total GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
+                  <div style={{ ...ps.totalRow, fontWeight: 700, borderTop: `1px solid ${t.border}`, paddingTop: "6px", marginTop: "4px" }}>
+                    <span>Grand Total</span><span>Rs.{(subTotal + totalTax).toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {!fetching && (selectedBrand || selectedCategory) && lines.length === 0 && (
+          <div style={ps.alertInfo}>No active products found for this {mode}.</div>
+        )}
+
+        <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "8px" }}>
+          <button style={ps.btnGhost} onClick={onClose}>Cancel</button>
+          <button style={ps.btnSuccess} onClick={handleCreate} disabled={loading || activeLines.length === 0 || !selectedSupplier}>
+            {loading ? "Creating..." : `Create Draft PO (${activeLines.length} items)`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── New PO Page ───────────────────────────────────────────────────────────────
 function NewPOPage({ suppliers, products, onBack, onCreated }) {
   const ps = usePageStyles();
@@ -91,6 +434,12 @@ function NewPOPage({ suppliers, products, onBack, onCreated }) {
   const [productSearch, setProductSearch] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [staffList, setStaffList] = useState([]);
+  const [createdByStaffId, setCreatedByStaffId] = useState(null);
+
+  useEffect(() => {
+    getStaff().then(setStaffList).catch(() => {});
+  }, []);
 
   const subTotal = lines.reduce((acc, l) => acc + (parseFloat(l.costPrice) || 0) * (parseInt(l.qty) || 0), 0);
   const totalTax = lines.reduce((acc, l) => acc + (parseFloat(l.costPrice) || 0) * (parseInt(l.qty) || 0) * ((parseFloat(l.gst) || 0) / 100), 0);
@@ -115,7 +464,7 @@ function NewPOPage({ suppliers, products, onBack, onCreated }) {
     }
     try {
       setLoading(true); setError("");
-      await createPurchaseOrder({ supplier: { id: selectedSupplier.id }, items: lines.map(l => ({ product: { id: l.productId }, quantity: parseInt(l.qty), price: parseFloat(l.costPrice) })) });
+      await createPurchaseOrder({ supplier: { id: selectedSupplier.id }, createdByStaff: createdByStaffId ? { id: createdByStaffId } : null, items: lines.map(l => ({ product: { id: l.productId }, quantity: parseInt(l.qty), price: parseFloat(l.costPrice) })) });
       onCreated();
     } catch (e) { setError(e.response?.data?.message || "Failed to create purchase order"); }
     finally { setLoading(false); }
@@ -139,6 +488,11 @@ function NewPOPage({ suppliers, products, onBack, onCreated }) {
             {selectedSupplier.address && <span>📍 {selectedSupplier.address}</span>}
           </div>
         )}
+        <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: `1px dashed ${t.border}` }}>
+          <label style={{ ...s.label, display: "block", marginBottom: "6px" }}>PO Generated By (Staff)</label>
+          <StaffDropdown staffList={staffList} value={createdByStaffId} onChange={setCreatedByStaffId} placeholder="Search staff by name/ID..." />
+          {!createdByStaffId && <div style={{ fontSize: "11px", color: t.textSub, marginTop: "4px" }}>Optional — select the staff member generating this PO</div>}
+        </div>
       </div>
 
       <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
@@ -255,7 +609,7 @@ function EditPOPage({ po, suppliers, products, onBack, onSaved }) {
 
   return (
     <div>
-      <PageHeader title={`Edit PO — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name} · ${po.orderDate}`} onBack={onBack} t={t} />
+      <PageHeader title={`Edit PO — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name} · ${po.orderDate}${po.createdBy ? ` · Created by: ${po.createdByStaff?.name || po.createdBy}` : ""}`} onBack={onBack} t={t} />
       {error && <div style={ps.alertError}>{error}</div>}
 
       {/* Add product row */}
@@ -393,7 +747,7 @@ function GRNPage({ po, products, onBack, onDone }) {
 
   return (
     <div>
-      <PageHeader title={`Goods Receipt — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name} · ${po.orderDate}`} onBack={onBack} t={t} />
+      <PageHeader title={`Goods Receipt — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name} · ${po.orderDate}${po.createdBy ? ` · Created by: ${po.createdByStaff?.name || po.createdBy}` : ""}`} onBack={onBack} t={t} />
       {error && <div style={ps.alertError}>{error}</div>}
 
       <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
@@ -485,7 +839,7 @@ function PayPage({ po, onBack, onDone }) {
 
   return (
     <div>
-      <PageHeader title={`Supplier Payment — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name}`} onBack={onBack} t={t} />
+      <PageHeader title={`Supplier Payment — ${po.poNumber}`} subtitle={`Supplier: ${po.supplier?.name}${po.createdBy ? ` · Created by: ${po.createdByStaff?.name || po.createdBy}` : ""}`} onBack={onBack} t={t} />
       {error && <div style={ps.alertError}>{error}</div>}
 
       {summary && (
@@ -604,16 +958,22 @@ export default function PurchaseOrderPage() {
   const [orders, setOrders] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [brands, setBrands] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [error, setError] = useState("");
+  const [reorderModal, setReorderModal] = useState(null);
+  const [showSupplierBrandModal, setShowSupplierBrandModal] = useState(false);
 
   useEffect(() => { loadAll(); }, []);
 
   const loadAll = async () => {
     try {
-      const [pos, sups, prods] = await Promise.all([getPurchaseOrders(), getSuppliers(), getProducts()]);
+      const [pos, sups, prods, brnds, cats] = await Promise.all([getPurchaseOrders(), getSuppliers(), getProducts(), getBrands(), getCategories()]);
       setOrders(pos);
       setSuppliers(sups);
       setProducts(prods);
+      setBrands(brnds);
+      setCategories(cats);
     } catch { setError("Failed to load data"); }
   };
 
@@ -663,10 +1023,21 @@ export default function PurchaseOrderPage() {
     <MainLayout>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
         <h2 style={{ margin: 0, fontSize: "20px", color: t.text }}>Purchase Orders</h2>
-        <button style={ps.btnPrimary} onClick={() => setView("new")}>+ New PO</button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button style={ps.btnGhost} onClick={() => setShowSupplierBrandModal(true)}>📦 Order by Brand / Category</button>
+          <button style={ps.btnPrimary} onClick={() => setView("new")}>+ New Order</button>
+        </div>
       </div>
 
       {error && <div style={ps.alertError}>{error}</div>}
+
+      {/* Modals */}
+      {reorderModal && (
+        <ReorderModal po={reorderModal} onClose={() => setReorderModal(null)} onCreated={() => { setReorderModal(null); loadAll(); }} />
+      )}
+      {showSupplierBrandModal && (
+        <SupplierBrandOrderModal suppliers={suppliers} brands={brands} categories={categories} onClose={() => setShowSupplierBrandModal(false)} onCreated={() => { setShowSupplierBrandModal(false); loadAll(); }} />
+      )}
 
       <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", overflow: "hidden" }}>
         <table style={s.table}>
@@ -679,11 +1050,13 @@ export default function PurchaseOrderPage() {
             <th style={s.th}>To Be Paid</th>
             <th style={s.th}>Status</th>
             <th style={s.th}>GRN Status</th>
+            <th style={s.th}>Created By</th>
             <th style={s.th}>Pay</th>
+            <th style={s.th}>Reorder</th>
           </tr></thead>
           <tbody>
             {orders.length === 0 && (
-              <tr><td colSpan={9} style={{ ...s.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No purchase orders yet</td></tr>
+              <tr><td colSpan={11} style={{ ...s.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No purchase orders yet</td></tr>
             )}
             {orders.map(o => {
               const totalBill = o.totalAmount || 0;
@@ -730,6 +1103,9 @@ export default function PurchaseOrderPage() {
                     )}
                   </td>
 
+                  {/* Created By */}
+                  <td style={{ ...s.td, color: t.textSub, fontSize: "11px" }}>{o.createdByStaff?.name || o.createdBy || "—"}</td>
+
                   {/* Pay column */}
                   <td style={s.td} onClick={e => e.stopPropagation()}>
                     {canPay(o.status) && toBePaid > 0 ? (
@@ -740,6 +1116,13 @@ export default function PurchaseOrderPage() {
                     ) : (
                       <span style={{ color: "#9ca3af", fontSize: "12px" }}>—</span>
                     )}
+                  </td>
+
+                  {/* Reorder column */}
+                  <td style={s.td} onClick={e => e.stopPropagation()}>
+                    <button style={ps.btnSmPrimary} onClick={() => setReorderModal(o)} title="Create new PO with same supplier & items">
+                      ↻ Reorder
+                    </button>
                   </td>
                 </tr>
               );

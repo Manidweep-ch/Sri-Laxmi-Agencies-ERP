@@ -18,7 +18,6 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
-
 @Entity
 @Table(name = "purchase_orders")
 public class PurchaseOrder {
@@ -47,6 +46,14 @@ public class PurchaseOrder {
     private BigDecimal tax;
 
     private BigDecimal totalAmount;
+
+    // Who created this PO (username of logged-in user)
+    private String createdBy;
+
+    // Staff member who generated this PO (optional, selected at creation)
+    @ManyToOne
+    @JoinColumn(name = "created_by_staff_id")
+    private Staff createdByStaff;
 
     private boolean active = true;
 
@@ -148,5 +155,21 @@ public class PurchaseOrder {
 
     public void setToBePaid(BigDecimal toBePaid) {
         this.toBePaid = toBePaid;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String createdBy) {
+        this.createdBy = createdBy;
+    }
+
+    public Staff getCreatedByStaff() {
+        return createdByStaff;
+    }
+
+    public void setCreatedByStaff(Staff createdByStaff) {
+        this.createdByStaff = createdByStaff;
     }
 }

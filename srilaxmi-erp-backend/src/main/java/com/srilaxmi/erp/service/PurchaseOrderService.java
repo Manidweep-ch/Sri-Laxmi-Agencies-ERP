@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,10 +13,12 @@ import com.srilaxmi.erp.entity.Product;
 import com.srilaxmi.erp.entity.PurchaseOrder;
 import com.srilaxmi.erp.entity.PurchaseOrderItem;
 import com.srilaxmi.erp.entity.PurchaseOrderStatus;
+import com.srilaxmi.erp.entity.Staff;
 import com.srilaxmi.erp.entity.Supplier;
 import com.srilaxmi.erp.repository.ProductRepository;
 import com.srilaxmi.erp.repository.PurchaseOrderItemRepository;
 import com.srilaxmi.erp.repository.PurchaseOrderRepository;
+import com.srilaxmi.erp.repository.StaffRepository;
 import com.srilaxmi.erp.repository.SupplierRepository;
 
 @Service
@@ -25,6 +28,7 @@ public class PurchaseOrderService {
     @Autowired private PurchaseOrderItemRepository purchaseOrderItemRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private SupplierRepository supplierRepository;
+    @Autowired private StaffRepository staffRepository;
     @Autowired private com.srilaxmi.erp.repository.SupplierPaymentRepository supplierPaymentRepository;
     @Autowired private com.srilaxmi.erp.repository.GoodsReceiptRepository goodsReceiptRepository;
 
@@ -43,6 +47,16 @@ public class PurchaseOrderService {
         po.setPoNumber(generatePoNumber());
         po.setOrderDate(LocalDate.now());
         po.setStatus(PurchaseOrderStatus.DRAFT);
+
+        // Stamp who created this PO
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        po.setCreatedBy(username);
+
+        // Resolve createdByStaff if provided
+        if (po.getCreatedByStaff() != null && po.getCreatedByStaff().getId() != null) {
+            staffRepository.findById(po.getCreatedByStaff().getId())
+                .ifPresent(po::setCreatedByStaff);
+        }
 
         List<PurchaseOrderItem> items = po.getItems();
         po.setItems(null);
@@ -199,6 +213,49 @@ public class PurchaseOrderService {
         int year = LocalDate.now().getYear();
         long count = purchaseOrderRepository.count() + 1;
         return String.format("PO-%d-%04d", year, count);
+    }
+
+    /**
+     * Creates a new DRAFT PO copying supplier + items from an existing PO.
+     */
+    @Transactional
+    public PurchaseOrder reorderFromPO(Long sourcePOId) {
+        PurchaseOrder source = getPOById(sourcePOId);
+        List<PurchaseOrderItem> sourceItems = purchaseOrderItemRepository.findByPurchaseOrderId(sourcePOId);
+
+        PurchaseOrder newPO = new PurchaseOrder();
+        newPO.setSupplier(source.getSupplier());
+        newPO.setPoNumber(generatePoNumber());
+        newPO.setOrderDate(LocalDate.now());
+        newPO.setStatus(PurchaseOrderStatus.DRAFT);
+
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        newPO.setCreatedBy(username);
+
+        PurchaseOrder saved = purchaseOrderRepository.save(newPO);
+
+        BigDecimal subTotal = BigDecimal.ZERO;
+        BigDecimal totalTax = BigDecimal.ZERO;
+
+        for (PurchaseOrderItem src : sourceItems) {
+            PurchaseOrderItem item = new PurchaseOrderItem();
+            item.setProduct(src.getProduct());
+            item.setQuantity(src.getQuantity());
+            item.setPrice(src.getPrice());
+            item.setPurchaseOrder(saved);
+            purchaseOrderItemRepository.save(item);
+
+            BigDecimal lineTotal = src.getPrice().multiply(new BigDecimal(src.getQuantity()));
+            double gst = src.getProduct() != null ? src.getProduct().getGst() : 0.0;
+            BigDecimal lineTax = lineTotal.multiply(BigDecimal.valueOf(gst / 100.0));
+            subTotal = subTotal.add(lineTotal);
+            totalTax = totalTax.add(lineTax);
+        }
+
+        saved.setSubTotal(subTotal);
+        saved.setTax(totalTax);
+        saved.setTotalAmount(subTotal.add(totalTax));
+        return purchaseOrderRepository.save(saved);
     }
 
     /**

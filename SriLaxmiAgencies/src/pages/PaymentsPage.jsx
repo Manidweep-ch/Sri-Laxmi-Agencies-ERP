@@ -1,273 +1,1123 @@
-import { useEffect, useState, Fragment } from "react";
+﻿import { useEffect, useState, useRef } from "react";
 import MainLayout from "../layout/MainLayout";
-import { getPaymentsByInvoice, createPayment, getOutstanding } from "../services/paymentService";
+import {
+  getPaymentsByInvoice, createPayment, getOutstanding, getAllPayments,
+  verifyPayment, updateChequeStatus, getPendingVerifications, getPendingCheques,
+  getAllSupplierPayments, getAllSalaryPayments
+} from "../services/paymentService";
 import { getInvoiceSummaries } from "../services/invoiceService";
 import { getPurchaseOrders, getSupplierPayments, recordSupplierPayment, getSupplierTotalPaid } from "../services/purchaseService";
-import { getWalletData } from "../services/dashboardService";
-import { getCreditNotesByInvoice } from "../services/creditNoteService";
 import { getSalesReturns, getRefundsByReturn, getTotalRefunded, recordRefund } from "../services/salesReturnService";
+import { getStaff } from "../services/staffService";
+import { getUsers } from "../services/userService";
 import { usePageStyles } from "../hooks/usePageStyles";
+import { useTheme } from "../context/ThemeContext";
+import { getTheme } from "../theme";
+import { useAuth } from "../context/AuthContext";
+
+const fmt2 = v => `Rs.${parseFloat(v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+const fmtDate = d => Array.isArray(d)
+  ? `${d[0]}-${String(d[1]).padStart(2,"0")}-${String(d[2]).padStart(2,"0")}`
+  : d || "-";
 
 const PAY_COLORS = { PAID: "#16a34a", PARTIALLY_PAID: "#f59e0b", OVERDUE: "#ef4444", UNPAID: "#6b7280", PENDING: "#6b7280" };
 const METHODS = ["CASH", "UPI", "BANK_TRANSFER", "CHEQUE", "NEFT", "RTGS"];
-const fmt2 = v => `Rs.${parseFloat(v || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+const ONLINE_METHODS = ["UPI", "BANK_TRANSFER", "NEFT", "RTGS"];
+const VSTATUS_COLOR = {
+  CONFIRMED: "#16a34a", VERIFIED: "#16a34a", DEPOSITED: "#16a34a",
+  PENDING: "#f59e0b", NOT_RECEIVED: "#ef4444", BOUNCED: "#ef4444"
+};
 
-// ── SO Payment Full Page ──────────────────────────────────────────────────────
-function SOPayPage({ inv, onBack, onDone, ps }) {
-  const { t } = ps;
-  const [payments, setPayments] = useState([]);
-  const [creditNotes, setCreditNotes] = useState([]);
-  const [outstanding, setOutstanding] = useState(null);
-  const [amount, setAmount] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
-  const [method, setMethod] = useState("CASH");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  const load = async () => {
-    try {
-      const [p, o, cn] = await Promise.all([getPaymentsByInvoice(inv.id), getOutstanding(inv.id), getCreditNotesByInvoice(inv.id)]);
-      setPayments(p); setOutstanding(o); setCreditNotes(cn);
-    } catch { setError("Failed to load payment data"); }
-  };
-
-  useEffect(() => { load(); }, [inv.id]);
-
-  const cnTotal = creditNotes.reduce((s, cn) => s + parseFloat(cn.amount || 0), 0);
-  const rawDue = parseFloat(outstanding?.outstandingAmount || 0);
-  const effectiveDue = Math.max(0, rawDue - cnTotal);
-
-  const handlePay = async () => {
-    const amt = parseFloat(amount);
-    if (!amt || amt <= 0) { setError("Enter a valid amount"); return; }
-    if (amt > effectiveDue) { setError(`Amount exceeds net due (${fmt2(effectiveDue)})`); return; }
-    try {
-      setLoading(true); setError("");
-      await createPayment({ invoice: { id: inv.id }, amount: amt, paymentDate: date, paymentMethod: method });
-      setAmount("");
-      await load();
-      onDone();
-    } catch (e) { setError(e.response?.data?.message || "Failed to record payment"); }
-    finally { setLoading(false); }
-  };
-
+// ── Searchable staff dropdown ─────────────────────────────────────────────────
+function StaffDropdown({ staffList, value, onChange, placeholder = "Search staff..." }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const selected = staffList.find(s => s.id === value);
+  useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const filtered = staffList.filter(s => s.active !== false && (!query ||
+    s.name?.toLowerCase().includes(query.toLowerCase()) ||
+    s.employeeId?.toLowerCase().includes(query.toLowerCase()) ||
+    s.designation?.toLowerCase().includes(query.toLowerCase())));
+  const displayText = selected
+    ? `${selected.employeeId ? selected.employeeId + " · " : ""}${selected.name} (${selected.designation || "Staff"})`
+    : "";
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
-        <button onClick={onBack} style={{ padding: "7px 14px", border: `1px solid ${t.border}`, borderRadius: "6px", background: t.surface, color: t.text, cursor: "pointer", fontSize: "13px" }}>← Back</button>
-        <div>
-          <h2 style={{ margin: 0, fontSize: "18px", color: t.text }}>Record Payment — {inv.invoiceNumber}</h2>
-          <div style={{ fontSize: "12px", color: t.textSub, marginTop: "2px" }}>Customer: {inv.customerName} · {inv.invoiceDate}</div>
-        </div>
-      </div>
-
-      {error && <div style={ps.alertError}>{error}</div>}
-
-      {outstanding && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginBottom: "20px" }}>
-          {[
-            { label: "Invoice Total", value: fmt2(outstanding.totalAmount) },
-            { label: "Received", value: fmt2(outstanding.paidAmount), color: "#16a34a" },
-            ...(cnTotal > 0 ? [{ label: "Credit Notes", value: `-${fmt2(cnTotal)}`, color: "#f59e0b" }] : []),
-            { label: "Net Due", value: fmt2(effectiveDue), color: effectiveDue > 0 ? "#ef4444" : "#16a34a", highlight: true },
-          ].map(c => (
-            <div key={c.label} style={{ background: c.highlight ? "#eff6ff" : t.surfaceAlt, border: `1px solid ${c.highlight ? "#bfdbfe" : t.border}`, borderRadius: "8px", padding: "14px" }}>
-              <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>{c.label}</div>
-              <div style={{ fontSize: "20px", fontWeight: 700, color: c.color || (c.highlight ? "#2563eb" : t.text) }}>{c.value}</div>
+    <div ref={ref} style={{ position: "relative" }}>
+      <input style={{ width: "240px", padding: "7px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "13px", background: t.inputBg, color: t.text, boxSizing: "border-box" }}
+        placeholder={placeholder}
+        value={open ? query : (selected ? displayText : "")}
+        onFocus={() => { setOpen(true); setQuery(""); }}
+        onChange={e => { setQuery(e.target.value); onChange(null); setOpen(true); }} />
+      {selected && !open && (
+        <button onClick={() => { onChange(null); setQuery(""); }}
+          style={{ position: "absolute", right: "6px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: "14px" }}>✕</button>
+      )}
+      {open && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: t.surface, border: `1px solid ${t.border}`, borderRadius: "6px", zIndex: 200, maxHeight: "200px", overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+          {filtered.length === 0 && <div style={{ padding: "10px 12px", fontSize: "13px", color: "#9ca3af" }}>No staff found</div>}
+          {filtered.map(s => (
+            <div key={s.id} style={{ padding: "8px 12px", cursor: "pointer", fontSize: "13px", color: t.text, borderBottom: `1px solid ${t.border}`, display: "flex", gap: "8px" }}
+              onMouseDown={() => { onChange(s.id); setOpen(false); setQuery(""); }}>
+              <span style={{ fontSize: "11px", color: "#2563eb", fontWeight: 600, minWidth: "60px" }}>{s.employeeId || "—"}</span>
+              <span style={{ fontWeight: 600 }}>{s.name}</span>
+              <span style={{ fontSize: "11px", color: t.textSub }}>({s.designation || "Staff"})</span>
             </div>
           ))}
-        </div>
-      )}
-
-      {effectiveDue > 0 ? (
-        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
-          <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "14px" }}>Record Payment Received</div>
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-end" }}>
-            <div>
-              <label style={ps.label}>Amount (Rs.) *</label>
-              <input style={{ ...ps.input, width: "150px", marginBottom: 0 }} type="number" min="0" max={effectiveDue}
-                value={amount} onChange={e => setAmount(e.target.value)} />
-            </div>
-            <div>
-              <label style={ps.label}>Date</label>
-              <input style={{ ...ps.input, width: "150px", marginBottom: 0 }} type="date" value={date} onChange={e => setDate(e.target.value)} />
-            </div>
-            <div>
-              <label style={ps.label}>Method</label>
-              <select style={{ ...ps.input, width: "150px", marginBottom: 0 }} value={method} onChange={e => setMethod(e.target.value)}>
-                {METHODS.map(m => <option key={m} value={m}>{m.replace("_", " ")}</option>)}
-              </select>
-            </div>
-            <button style={ps.btnSuccess} onClick={handlePay} disabled={loading}>{loading ? "Saving..." : "Record Payment"}</button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "14px 16px", marginBottom: "20px", color: "#16a34a", fontWeight: 600 }}>
-          {cnTotal > 0 && rawDue > 0 ? `Balance of ${fmt2(rawDue)} fully covered by credit notes.` : "Invoice fully settled."}
-        </div>
-      )}
-
-      {payments.length > 0 && (
-        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
-          <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Payment History</div>
-          <table style={ps.table}>
-            <thead><tr style={ps.thead}>
-              <th style={ps.th}>#</th><th style={ps.th}>Date</th><th style={ps.th}>Amount</th><th style={ps.th}>Method</th>
-            </tr></thead>
-            <tbody>
-              {payments.map((p, i) => (
-                <tr key={p.id} style={ps.tr}>
-                  <td style={ps.td}>{i + 1}</td>
-                  <td style={ps.tdSub}>{p.paymentDate}</td>
-                  <td style={{ ...ps.td, color: "#16a34a", fontWeight: 600 }}>{fmt2(p.amount)}</td>
-                  <td style={ps.tdSub}>{p.paymentMethod?.replace("_", " ")}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {creditNotes.length > 0 && (
-        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px" }}>
-          <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Credit Notes Applied</div>
-          <table style={ps.table}>
-            <thead><tr style={ps.thead}>
-              <th style={ps.th}>CN #</th><th style={ps.th}>Date</th><th style={ps.th}>Amount</th><th style={ps.th}>Reason</th>
-            </tr></thead>
-            <tbody>
-              {creditNotes.map(cn => (
-                <tr key={cn.id} style={ps.tr}>
-                  <td style={{ ...ps.td, fontWeight: 600 }}>{cn.creditNoteNumber}</td>
-                  <td style={ps.tdSub}>{cn.date}</td>
-                  <td style={{ ...ps.td, color: "#f59e0b", fontWeight: 600 }}>-{fmt2(cn.amount)}</td>
-                  <td style={ps.tdSub}>{cn.reason || "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
     </div>
   );
 }
 
-// ── PO Payment Full Page ──────────────────────────────────────────────────────
-function POPayPage({ po, onBack, onDone, ps }) {
+// ── User (admin) dropdown ─────────────────────────────────────────────────────
+function UserDropdown({ userList, value, onChange }) {
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  return (
+    <select style={{ width: "240px", padding: "7px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "13px", background: t.inputBg, color: t.text }}
+      value={value || ""} onChange={e => onChange(e.target.value ? parseInt(e.target.value) : null)}>
+      <option value="">— Select admin account —</option>
+      {userList.map(u => <option key={u.id} value={u.id}>{u.username} ({u.role?.name || u.role})</option>)}
+    </select>
+  );
+}
+
+
+// ── SO Payment Page ───────────────────────────────────────────────────────────
+function SOPayPage({ ps }) {
   const { t } = ps;
+  const [invoices, setInvoices] = useState([]);
+  const [staffList, setStaffList] = useState([]);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [selInv, setSelInv] = useState(null);
+  const [outstanding, setOutstanding] = useState(null);
   const [payments, setPayments] = useState([]);
-  const [totalPaid, setTotalPaid] = useState(0);
-  const [amount, setAmount] = useState("");
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
-  const [method, setMethod] = useState("CASH");
-  const [notes, setNotes] = useState("");
+  const [form, setForm] = useState({ amount: "", paymentMethod: "CASH", paymentDate: new Date().toISOString().split("T")[0], notes: "", chequeDepositDate: "" });
+  const [cashWhere, setCashWhere] = useState("shop");
+  const [onlineWhere, setOnlineWhere] = useState("company");
+  const [receivedByStaffId, setReceivedByStaffId] = useState(null);
+  const [receivedByUserId, setReceivedByUserId] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState("");
 
-  const load = async () => {
+  useEffect(() => {
+    getInvoiceSummaries().then(setInvoices).catch(() => {});
+    getStaff().then(setStaffList).catch(() => {});
+    getUsers().then(us => setAdminUsers(us.filter(u => (u.role?.name || u.role) === "ADMIN"))).catch(() => {});
+  }, []);
+
+  const selectInvoice = async (inv) => {
+    setSelInv(inv); setError(""); setSuccess("");
     try {
-      const [pmts, paid] = await Promise.all([getSupplierPayments(po.id), getSupplierTotalPaid(po.id)]);
-      setPayments(pmts); setTotalPaid(parseFloat(paid) || 0);
-    } catch { setError("Failed to load payment data"); }
+      const [out, pays] = await Promise.all([
+        getOutstanding(inv.id),
+        getPaymentsByInvoice(inv.id),
+      ]);
+      setOutstanding(out); setPayments(pays);
+      setForm(f => ({ ...f, amount: out.outstandingAmount > 0 ? String(parseFloat(out.outstandingAmount).toFixed(2)) : "" }));
+    } catch { setError("Failed to load invoice details"); }
   };
 
-  useEffect(() => { load(); }, [po.id]);
+  const isCash = form.paymentMethod === "CASH";
+  const isOnline = ONLINE_METHODS.includes(form.paymentMethod);
+  const isCheque = form.paymentMethod === "CHEQUE";
 
-  const orderAmt = parseFloat(po.totalAmount || 0);
-  const amtDue = Math.max(0, orderAmt - totalPaid);
-
-  const handlePay = async () => {
-    const amt = parseFloat(amount);
+  const handleSave = async () => {
+    if (!selInv) { setError("Select an invoice"); return; }
+    const amt = parseFloat(form.amount);
     if (!amt || amt <= 0) { setError("Enter a valid amount"); return; }
-    if (amt > amtDue) { setError(`Amount exceeds balance due (${fmt2(amtDue)})`); return; }
+    if (isCheque && !form.chequeDepositDate) { setError("Enter cheque deposit date"); return; }
+    if (isCash && cashWhere === "staff" && !receivedByStaffId) { setError("Select the staff who received cash"); return; }
+    if (isOnline && onlineWhere === "admin" && !receivedByUserId) { setError("Select the admin account that received the payment"); return; }
+
+    const payload = {
+      amount: amt,
+      paymentMethod: form.paymentMethod,
+      paymentDate: form.paymentDate,
+      notes: form.notes || null,
+      chequeDepositDate: isCheque ? form.chequeDepositDate : null,
+      invoice: { id: selInv.id },
+      receivedBy: (isCash && cashWhere === "staff" && receivedByStaffId) ? { id: receivedByStaffId } : null,
+      receivedByUser: (isOnline && onlineWhere === "admin" && receivedByUserId) ? { id: receivedByUserId } : null,
+    };
+
     try {
-      setLoading(true); setError("");
-      await recordSupplierPayment(po.id, { amount: amt, paymentDate: date, paymentMethod: method, notes });
-      setAmount(""); setNotes("");
-      await load();
-      onDone();
-    } catch (e) { setError(e.response?.data?.message || "Payment failed"); }
-    finally { setLoading(false); }
+      setSaving(true); setError(""); setSuccess("");
+      await createPayment(payload);
+      setSuccess("Payment recorded successfully");
+      await selectInvoice(selInv);
+      setForm(f => ({ ...f, notes: "", chequeDepositDate: "" }));
+      setReceivedByStaffId(null); setReceivedByUserId(null);
+      setCashWhere("shop"); setOnlineWhere("company");
+    } catch (e) { setError(e.response?.data?.message || e.response?.data || "Failed to save payment"); }
+    finally { setSaving(false); }
   };
+
+  const unpaidInvoices = invoices.filter(i => i.paymentStatus !== "PAID");
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
-        <button onClick={onBack} style={{ padding: "7px 14px", border: `1px solid ${t.border}`, borderRadius: "6px", background: t.surface, color: t.text, cursor: "pointer", fontSize: "13px" }}>← Back</button>
-        <div>
-          <h2 style={{ margin: 0, fontSize: "18px", color: t.text }}>Supplier Payment — {po.poNumber}</h2>
-          <div style={{ fontSize: "12px", color: t.textSub, marginTop: "2px" }}>Supplier: {po.supplier?.name} · {po.orderDate}</div>
-        </div>
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
+        <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Select Invoice</div>
+        <select style={{ ...ps.input, width: "360px", marginBottom: 0 }}
+          value={selInv?.id || ""} onChange={e => {
+            const inv = invoices.find(i => i.id === parseInt(e.target.value));
+            if (inv) selectInvoice(inv); else { setSelInv(null); setOutstanding(null); setPayments([]); }
+          }}>
+          <option value="">— Select invoice —</option>
+          {unpaidInvoices.map(i => (
+            <option key={i.id} value={i.id}>
+              {i.invoiceNumber} — {i.customerName} — {fmt2(i.totalAmount)} [{i.paymentStatus}]
+            </option>
+          ))}
+        </select>
       </div>
 
-      {error && <div style={ps.alertError}>{error}</div>}
+      {selInv && outstanding && (
+        <>
+          <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
+            {[
+              { label: "Invoice Total", value: outstanding.totalAmount, color: "#2563eb" },
+              { label: "Paid", value: outstanding.paidAmount, color: "#16a34a" },
+              { label: "Outstanding", value: outstanding.outstandingAmount, color: parseFloat(outstanding.outstandingAmount) > 0 ? "#ef4444" : "#16a34a", big: true },
+            ].map(c => (
+              <div key={c.label} style={{ background: t.surface, border: `1px solid ${c.color}44`, borderRadius: "8px", padding: "14px", flex: 1, minWidth: "130px" }}>
+                <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>{c.label}</div>
+                <div style={{ fontSize: c.big ? "20px" : "16px", fontWeight: 700, color: c.color }}>{fmt2(c.value)}</div>
+              </div>
+            ))}
+          </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginBottom: "20px" }}>
+          {parseFloat(outstanding.outstandingAmount) > 0 ? (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "16px" }}>Record Payment</div>
+              {error && <div style={ps.alertError}>{error}</div>}
+              {success && <div style={ps.alertSuccess}>{success}</div>}
+
+              <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div>
+                  <label style={ps.label}>Amount (Rs.) *</label>
+                  <input style={{ ...ps.input, width: "150px", marginBottom: 0 }} type="number" min="0"
+                    max={outstanding.outstandingAmount} value={form.amount}
+                    onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={ps.label}>Payment Method *</label>
+                  <select style={{ ...ps.input, width: "170px", marginBottom: 0 }} value={form.paymentMethod}
+                    onChange={e => { setForm(f => ({ ...f, paymentMethod: e.target.value })); setCashWhere("shop"); setOnlineWhere("company"); setReceivedByStaffId(null); setReceivedByUserId(null); }}>
+                    {METHODS.map(m => <option key={m} value={m}>{m.replace("_"," ")}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={ps.label}>Payment Date *</label>
+                  <input style={{ ...ps.input, width: "160px", marginBottom: 0 }} type="date" value={form.paymentDate}
+                    onChange={e => setForm(f => ({ ...f, paymentDate: e.target.value }))} />
+                </div>
+              </div>
+
+              {isCash && (
+                <div style={{ marginTop: "16px", padding: "14px", background: t.bg, borderRadius: "8px", border: `1px solid ${t.border}` }}>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: t.text, marginBottom: "10px" }}>Where was the cash received?</div>
+                  <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: t.text, cursor: "pointer" }}>
+                      <input type="radio" name="cashWhere" value="shop" checked={cashWhere === "shop"} onChange={() => { setCashWhere("shop"); setReceivedByStaffId(null); }} />
+                      At shop / company (direct to company wallet)
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: t.text, cursor: "pointer" }}>
+                      <input type="radio" name="cashWhere" value="staff" checked={cashWhere === "staff"} onChange={() => setCashWhere("staff")} />
+                      Given to a staff member
+                    </label>
+                  </div>
+                  {cashWhere === "staff" && (
+                    <div style={{ marginTop: "10px" }}>
+                      <label style={ps.label}>Staff who received cash *</label>
+                      <StaffDropdown staffList={staffList} value={receivedByStaffId} onChange={setReceivedByStaffId} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isOnline && (
+                <div style={{ marginTop: "16px", padding: "14px", background: t.bg, borderRadius: "8px", border: `1px solid ${t.border}` }}>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: t.text, marginBottom: "10px" }}>Which account received the payment?</div>
+                  <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: t.text, cursor: "pointer" }}>
+                      <input type="radio" name="onlineWhere" value="company" checked={onlineWhere === "company"} onChange={() => { setOnlineWhere("company"); setReceivedByUserId(null); }} />
+                      Company account (direct to company wallet)
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: t.text, cursor: "pointer" }}>
+                      <input type="radio" name="onlineWhere" value="admin" checked={onlineWhere === "admin"} onChange={() => setOnlineWhere("admin")} />
+                      Admin's personal account (needs verification)
+                    </label>
+                  </div>
+                  {onlineWhere === "admin" && (
+                    <div style={{ marginTop: "10px" }}>
+                      <label style={ps.label}>Admin account *</label>
+                      <UserDropdown userList={adminUsers} value={receivedByUserId} onChange={setReceivedByUserId} />
+                      <div style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>
+                        The selected admin will need to verify this payment in their dashboard.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isCheque && (
+                <div style={{ marginTop: "16px", padding: "14px", background: "#fef3c744", borderRadius: "8px", border: "1px solid #f59e0b44" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: t.text, marginBottom: "10px" }}>Cheque Details</div>
+                  <label style={ps.label}>Cheque Deposit Date *</label>
+                  <input style={{ ...ps.input, width: "180px", marginBottom: 0 }} type="date" value={form.chequeDepositDate}
+                    onChange={e => setForm(f => ({ ...f, chequeDepositDate: e.target.value }))} />
+                  <div style={{ fontSize: "11px", color: "#92400e", marginTop: "4px" }}>
+                    Accounts will be reminded on this date to confirm deposit or bounce.
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginTop: "14px" }}>
+                <label style={ps.label}>Notes</label>
+                <input style={{ ...ps.input, width: "100%", maxWidth: "400px", marginBottom: 0 }} placeholder="Optional notes..."
+                  value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+              </div>
+              <div style={{ marginTop: "16px" }}>
+                <button style={ps.btnSuccess} onClick={handleSave} disabled={saving}>
+                  {saving ? "Saving..." : "Record Payment"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ ...ps.alertSuccess, marginBottom: "20px" }}>This invoice is fully paid.</div>
+          )}
+
+          {payments.length > 0 && (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Payment History</div>
+              <table style={ps.table}>
+                <thead><tr style={ps.thead}>
+                  <th style={ps.th}>Date</th><th style={ps.th}>Amount</th><th style={ps.th}>Method</th>
+                  <th style={ps.th}>Received By</th><th style={ps.th}>Destination</th><th style={ps.th}>Status</th><th style={ps.th}>Notes</th>
+                </tr></thead>
+                <tbody>
+                  {payments.map(p => (
+                    <tr key={p.id} style={ps.tr}>
+                      <td style={ps.tdSub}>{fmtDate(p.paymentDate)}</td>
+                      <td style={{ ...ps.td, color: "#2563eb", fontWeight: 600 }}>{fmt2(p.amount)}</td>
+                      <td style={ps.tdSub}>{p.paymentMethod?.replace("_"," ")}</td>
+                      <td style={ps.td}>
+                        {p.receivedBy ? `${p.receivedBy.name} (Staff)` : p.receivedByUser ? `${p.receivedByUser.username} (Admin)` : "Company Direct"}
+                      </td>
+                      <td style={ps.tdSub}>{p.destination?.replace("_"," ")}</td>
+                      <td style={ps.td}>
+                        <span style={{ padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 600,
+                          background: (VSTATUS_COLOR[p.verificationStatus] || "#6b7280") + "22",
+                          color: VSTATUS_COLOR[p.verificationStatus] || "#6b7280" }}>
+                          {p.verificationStatus}
+                        </span>
+                      </td>
+                      <td style={ps.tdSub}>{p.notes || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
+// ── PO Payment Page ───────────────────────────────────────────────────────────
+function POPayPage({ ps }) {
+  const { t } = ps;
+  const [orders, setOrders] = useState([]);
+  const [selPO, setSelPO] = useState(null);
+  const [poPayments, setPoPayments] = useState([]);
+  const [totalPaid, setTotalPaid] = useState(0);
+  const [form, setForm] = useState({ amount: "", paymentMethod: "BANK_TRANSFER", paymentDate: new Date().toISOString().split("T")[0], notes: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => { getPurchaseOrders().then(setOrders).catch(() => {}); }, []);
+
+  const selectPO = async (po) => {
+    setSelPO(po); setError(""); setSuccess("");
+    try {
+      const [pays, paid] = await Promise.all([
+        getSupplierPayments(po.id),
+        getSupplierTotalPaid(po.id)
+      ]);
+      setPoPayments(pays); setTotalPaid(paid);
+      const receivedVal = parseFloat(po.receivedValue || po.totalAmount || 0);
+      const outstanding = Math.max(0, receivedVal - parseFloat(paid || 0));
+      setForm(f => ({ ...f, amount: outstanding > 0 ? String(outstanding.toFixed(2)) : "" }));
+    } catch { setError("Failed to load PO details"); }
+  };
+
+  const handleSave = async () => {
+    if (!selPO) { setError("Select a purchase order"); return; }
+    const amt = parseFloat(form.amount);
+    if (!amt || amt <= 0) { setError("Enter a valid amount"); return; }
+    try {
+      setSaving(true); setError(""); setSuccess("");
+      await recordSupplierPayment({ purchaseOrderId: selPO.id, amount: amt, paymentMethod: form.paymentMethod, paymentDate: form.paymentDate, notes: form.notes });
+      setSuccess("Supplier payment recorded");
+      await selectPO(selPO);
+      setForm(f => ({ ...f, notes: "" }));
+    } catch (e) { setError(e.response?.data?.message || e.response?.data || "Failed to save"); }
+    finally { setSaving(false); }
+  };
+
+  const receivedValue = parseFloat(selPO?.receivedValue || selPO?.totalAmount || 0);
+  const outstanding = Math.max(0, receivedValue - parseFloat(totalPaid || 0));
+
+  return (
+    <div>
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
+        <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Select Purchase Order</div>
+        <select style={{ ...ps.input, width: "360px", marginBottom: 0 }}
+          value={selPO?.id || ""} onChange={e => {
+            const po = orders.find(o => o.id === parseInt(e.target.value));
+            if (po) selectPO(po); else { setSelPO(null); setPoPayments([]); setTotalPaid(0); }
+          }}>
+          <option value="">— Select PO —</option>
+          {orders.filter(o => o.status !== "DRAFT").map(o => (
+            <option key={o.id} value={o.id}>
+              {o.poNumber} — {o.supplier?.name || o.supplierName} — {fmt2(o.totalAmount)} [{o.status}]
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {selPO && (
+        <>
+          <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
+            {[
+              { label: "PO Total", value: selPO.totalAmount, color: "#2563eb" },
+              { label: "Received Value", value: receivedValue, color: "#8b5cf6" },
+              { label: "Total Paid", value: totalPaid, color: "#16a34a" },
+              { label: "Outstanding", value: outstanding, color: outstanding > 0 ? "#ef4444" : "#16a34a", big: true },
+            ].map(c => (
+              <div key={c.label} style={{ background: t.surface, border: `1px solid ${c.color}44`, borderRadius: "8px", padding: "14px", flex: 1, minWidth: "130px" }}>
+                <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>{c.label}</div>
+                <div style={{ fontSize: c.big ? "20px" : "16px", fontWeight: 700, color: c.color }}>{fmt2(c.value)}</div>
+              </div>
+            ))}
+          </div>
+
+          {outstanding > 0 ? (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "16px" }}>Record Supplier Payment</div>
+              {error && <div style={ps.alertError}>{error}</div>}
+              {success && <div style={ps.alertSuccess}>{success}</div>}
+              <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div>
+                  <label style={ps.label}>Amount (Rs.) *</label>
+                  <input style={{ ...ps.input, width: "150px", marginBottom: 0 }} type="number" min="0" max={outstanding}
+                    value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={ps.label}>Method</label>
+                  <select style={{ ...ps.input, width: "170px", marginBottom: 0 }} value={form.paymentMethod}
+                    onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>
+                    {["CASH","UPI","BANK_TRANSFER","CHEQUE","NEFT","RTGS"].map(m => <option key={m} value={m}>{m.replace("_"," ")}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={ps.label}>Date</label>
+                  <input style={{ ...ps.input, width: "160px", marginBottom: 0 }} type="date" value={form.paymentDate}
+                    onChange={e => setForm(f => ({ ...f, paymentDate: e.target.value }))} />
+                </div>
+                <div style={{ flex: "2 1 180px" }}>
+                  <label style={ps.label}>Notes</label>
+                  <input style={{ ...ps.input, marginBottom: 0 }} placeholder="Optional..." value={form.notes}
+                    onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+                </div>
+                <button style={ps.btnSuccess} onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Pay Supplier"}</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ ...ps.alertSuccess, marginBottom: "20px" }}>Supplier fully paid for received goods.</div>
+          )}
+
+          {poPayments.length > 0 && (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Payment History</div>
+              <table style={ps.table}>
+                <thead><tr style={ps.thead}>
+                  <th style={ps.th}>Date</th><th style={ps.th}>Amount</th><th style={ps.th}>Method</th><th style={ps.th}>Notes</th>
+                </tr></thead>
+                <tbody>
+                  {poPayments.map((p, i) => (
+                    <tr key={i} style={ps.tr}>
+                      <td style={ps.tdSub}>{fmtDate(p.paymentDate)}</td>
+                      <td style={{ ...ps.td, color: "#2563eb", fontWeight: 600 }}>{fmt2(p.amount)}</td>
+                      <td style={ps.tdSub}>{p.paymentMethod?.replace("_"," ")}</td>
+                      <td style={ps.tdSub}>{p.notes || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
+// ── Refunds Tab ───────────────────────────────────────────────────────────────
+function RefundsTab({ ps }) {
+  const { t } = ps;
+  const [returns, setReturns] = useState([]);
+  const [selReturn, setSelReturn] = useState(null);
+  const [refunds, setRefunds] = useState([]);
+  const [totalRefunded, setTotalRefunded] = useState(0);
+  const [form, setForm] = useState({ amount: "", refundMethod: "CASH", refundDate: new Date().toISOString().split("T")[0], notes: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => { getSalesReturns().then(setReturns).catch(() => {}); }, []);
+
+  const selectReturn = async (ret) => {
+    setSelReturn(ret); setError(""); setSuccess("");
+    try {
+      const [refs, total] = await Promise.all([getRefundsByReturn(ret.id), getTotalRefunded(ret.id)]);
+      setRefunds(refs); setTotalRefunded(total);
+      const outstanding = Math.max(0, parseFloat(ret.refundAmount || 0) - parseFloat(total || 0));
+      setForm(f => ({ ...f, amount: outstanding > 0 ? String(outstanding.toFixed(2)) : "" }));
+    } catch { setError("Failed to load return details"); }
+  };
+
+  const handleSave = async () => {
+    if (!selReturn) { setError("Select a return"); return; }
+    const amt = parseFloat(form.amount);
+    if (!amt || amt <= 0) { setError("Enter a valid amount"); return; }
+    try {
+      setSaving(true); setError(""); setSuccess("");
+      await recordRefund({ salesReturnId: selReturn.id, amount: amt, refundMethod: form.refundMethod, refundDate: form.refundDate, notes: form.notes });
+      setSuccess("Refund recorded");
+      await selectReturn(selReturn);
+      setForm(f => ({ ...f, notes: "" }));
+    } catch (e) { setError(e.response?.data?.message || "Failed to save"); }
+    finally { setSaving(false); }
+  };
+
+  const outstanding = selReturn ? Math.max(0, parseFloat(selReturn.refundAmount || 0) - parseFloat(totalRefunded || 0)) : 0;
+
+  return (
+    <div>
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
+        <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Select Sales Return</div>
+        <select style={{ ...ps.input, width: "360px", marginBottom: 0 }}
+          value={selReturn?.id || ""} onChange={e => {
+            const ret = returns.find(r => r.id === parseInt(e.target.value));
+            if (ret) selectReturn(ret); else { setSelReturn(null); setRefunds([]); setTotalRefunded(0); }
+          }}>
+          <option value="">— Select return —</option>
+          {returns.map(r => (
+            <option key={r.id} value={r.id}>
+              {r.returnNumber || `RET-${r.id}`} — {r.customerName || r.customer?.name} — {fmt2(r.refundAmount)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {selReturn && (
+        <>
+          <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
+            {[
+              { label: "Return Amount", value: selReturn.refundAmount, color: "#2563eb" },
+              { label: "Refunded", value: totalRefunded, color: "#16a34a" },
+              { label: "Pending Refund", value: outstanding, color: outstanding > 0 ? "#ef4444" : "#16a34a", big: true },
+            ].map(c => (
+              <div key={c.label} style={{ background: t.surface, border: `1px solid ${c.color}44`, borderRadius: "8px", padding: "14px", flex: 1, minWidth: "130px" }}>
+                <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>{c.label}</div>
+                <div style={{ fontSize: c.big ? "20px" : "16px", fontWeight: 700, color: c.color }}>{fmt2(c.value)}</div>
+              </div>
+            ))}
+          </div>
+
+          {outstanding > 0 ? (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "16px" }}>Record Refund</div>
+              {error && <div style={ps.alertError}>{error}</div>}
+              {success && <div style={ps.alertSuccess}>{success}</div>}
+              <div style={{ display: "flex", gap: "14px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div>
+                  <label style={ps.label}>Amount (Rs.) *</label>
+                  <input style={{ ...ps.input, width: "150px", marginBottom: 0 }} type="number" min="0" max={outstanding}
+                    value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={ps.label}>Method</label>
+                  <select style={{ ...ps.input, width: "170px", marginBottom: 0 }} value={form.refundMethod}
+                    onChange={e => setForm(f => ({ ...f, refundMethod: e.target.value }))}>
+                    {["CASH","UPI","BANK_TRANSFER","CHEQUE","NEFT","RTGS"].map(m => <option key={m} value={m}>{m.replace("_"," ")}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={ps.label}>Date</label>
+                  <input style={{ ...ps.input, width: "160px", marginBottom: 0 }} type="date" value={form.refundDate}
+                    onChange={e => setForm(f => ({ ...f, refundDate: e.target.value }))} />
+                </div>
+                <div style={{ flex: "2 1 180px" }}>
+                  <label style={ps.label}>Notes</label>
+                  <input style={{ ...ps.input, marginBottom: 0 }} placeholder="Optional..." value={form.notes}
+                    onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+                </div>
+                <button style={ps.btnSuccess} onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Record Refund"}</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ ...ps.alertSuccess, marginBottom: "20px" }}>Fully refunded.</div>
+          )}
+
+          {refunds.length > 0 && (
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Refund History</div>
+              <table style={ps.table}>
+                <thead><tr style={ps.thead}>
+                  <th style={ps.th}>Date</th><th style={ps.th}>Amount</th><th style={ps.th}>Method</th><th style={ps.th}>Notes</th>
+                </tr></thead>
+                <tbody>
+                  {refunds.map((r, i) => (
+                    <tr key={i} style={ps.tr}>
+                      <td style={ps.tdSub}>{fmtDate(r.refundDate)}</td>
+                      <td style={{ ...ps.td, color: "#2563eb", fontWeight: 600 }}>{fmt2(r.amount)}</td>
+                      <td style={ps.tdSub}>{r.refundMethod?.replace("_"," ")}</td>
+                      <td style={ps.tdSub}>{r.notes || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
+// ── Verify Tab (admin sees payments sent to their account) ────────────────────
+function VerifyTab({ ps }) {
+  const { t } = ps;
+  const { user } = useAuth();
+  const [pending, setPending] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notes, setNotes] = useState({});
+
+  const load = async () => {
+    if (!user?.userId) return;
+    try {
+      setLoading(true);
+      setPending(await getPendingVerifications(user.userId));
+    } catch { setError("Failed to load pending verifications"); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, [user?.userId]);
+
+  const handleVerify = async (id, status) => {
+    try {
+      await verifyPayment(id, status, notes[id] || "");
+      await load();
+    } catch { setError("Failed to update"); }
+  };
+
+  if (!user?.userId) return <div style={{ padding: "20px", color: t.textSub }}>Not logged in.</div>;
+
+  return (
+    <div>
+      <div style={{ marginBottom: "16px", fontSize: "13px", color: t.textSub }}>
+        Payments sent to your account that need verification. Check your bank statement and mark each as received or not received.
+      </div>
+      {error && <div style={ps.alertError}>{error}</div>}
+      {loading && <div style={ps.alertInfo}>Loading...</div>}
+      {!loading && pending.length === 0 && (
+        <div style={{ padding: "32px", textAlign: "center", color: "#9ca3af", background: t.surface, borderRadius: "8px", border: `1px solid ${t.border}` }}>
+          No pending verifications for your account.
+        </div>
+      )}
+      {pending.map(p => (
+        <div key={p.id} style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "12px", display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ flex: "1 1 200px" }}>
+            <div style={{ fontWeight: 700, fontSize: "15px", color: "#2563eb" }}>{fmt2(p.amount)}</div>
+            <div style={{ fontSize: "12px", color: t.textSub, marginTop: "2px" }}>
+              {fmtDate(p.paymentDate)} · {p.paymentMethod?.replace("_"," ")} · {p.invoice?.invoiceNumber || "-"}
+            </div>
+            {p.invoice?.customerName && <div style={{ fontSize: "12px", color: t.text, marginTop: "2px" }}>Customer: {p.invoice.customerName}</div>}
+          </div>
+          <div style={{ flex: "2 1 200px" }}>
+            <input style={{ ...ps.input, marginBottom: 0, width: "100%" }} placeholder="Notes (optional)..."
+              value={notes[p.id] || ""} onChange={e => setNotes(n => ({ ...n, [p.id]: e.target.value }))} />
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button style={{ ...ps.btnSuccess, padding: "7px 16px" }} onClick={() => handleVerify(p.id, "VERIFIED")}>
+              ✓ Received
+            </button>
+            <button style={{ ...ps.btnDanger, padding: "7px 16px" }} onClick={() => handleVerify(p.id, "NOT_RECEIVED")}>
+              ✗ Not Received
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Cheques Tab (ACCOUNTS confirms deposit/bounce) ────────────────────────────
+function ChequesTab({ ps }) {
+  const { t } = ps;
+  const [cheques, setCheques] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notes, setNotes] = useState({});
+
+  const load = async () => {
+    try {
+      setLoading(true);
+      setCheques(await getPendingCheques());
+    } catch { setError("Failed to load cheques"); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handleStatus = async (id, status) => {
+    try {
+      await updateChequeStatus(id, status, notes[id] || "");
+      await load();
+    } catch { setError("Failed to update cheque status"); }
+  };
+
+  const today = new Date().toISOString().split("T")[0];
+
+  return (
+    <div>
+      <div style={{ marginBottom: "16px", fontSize: "13px", color: t.textSub }}>
+        Pending cheques — confirm deposit or mark as bounced on the deposit date.
+      </div>
+      {error && <div style={ps.alertError}>{error}</div>}
+      {loading && <div style={ps.alertInfo}>Loading...</div>}
+      {!loading && cheques.length === 0 && (
+        <div style={{ padding: "32px", textAlign: "center", color: "#9ca3af", background: t.surface, borderRadius: "8px", border: `1px solid ${t.border}` }}>
+          No pending cheques.
+        </div>
+      )}
+      {cheques.map(p => {
+        const depositDate = fmtDate(p.chequeDepositDate);
+        const isOverdue = p.chequeDepositDate && depositDate <= today;
+        return (
+          <div key={p.id} style={{ background: t.surface, border: `1px solid ${isOverdue ? "#ef4444" : t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "12px", display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ flex: "1 1 200px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontWeight: 700, fontSize: "15px", color: "#2563eb" }}>{fmt2(p.amount)}</span>
+                {isOverdue && <span style={{ fontSize: "11px", background: "#fef2f2", color: "#ef4444", padding: "2px 8px", borderRadius: "10px", fontWeight: 600 }}>DUE</span>}
+              </div>
+              <div style={{ fontSize: "12px", color: t.textSub, marginTop: "2px" }}>
+                Received: {fmtDate(p.paymentDate)} · Deposit by: {depositDate}
+              </div>
+              <div style={{ fontSize: "12px", color: t.text, marginTop: "2px" }}>
+                {p.invoice?.invoiceNumber || "-"} · {p.invoice?.customerName || "-"}
+              </div>
+            </div>
+            <div style={{ flex: "2 1 200px" }}>
+              <input style={{ ...ps.input, marginBottom: 0, width: "100%" }} placeholder="Notes (optional)..."
+                value={notes[p.id] || ""} onChange={e => setNotes(n => ({ ...n, [p.id]: e.target.value }))} />
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button style={{ ...ps.btnSuccess, padding: "7px 16px" }} onClick={() => handleStatus(p.id, "DEPOSITED")}>
+                ✓ Deposited
+              </button>
+              <button style={{ ...ps.btnDanger, padding: "7px 16px" }} onClick={() => handleStatus(p.id, "BOUNCED")}>
+                ✗ Bounced
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
+
+
+// ── History Tab (Accounts) ───────────────────────────────────────────────────
+function HistoryTab({ ps }) {
+  const { t } = ps;
+  const [subTab, setSubTab] = useState("customers");
+  const [customerPayments, setCustomerPayments] = useState([]);
+  const [supplierPayments, setSupplierPayments] = useState([]);
+  const [salaryPayments, setSalaryPayments] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  // Filters
+  const [search, setSearch] = useState("");
+  const [filterMethod, setFilterMethod] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterFrom, setFilterFrom] = useState("");
+  const [filterTo, setFilterTo] = useState("");
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      getAllPayments().catch(() => []),
+      getAllSupplierPayments().catch(() => []),
+      getAllSalaryPayments().catch(() => []),
+    ]).then(([cp, sp, sal]) => {
+      setCustomerPayments(Array.isArray(cp) ? cp : []);
+      setSupplierPayments(Array.isArray(sp) ? sp : []);
+      setSalaryPayments(Array.isArray(sal) ? sal : []);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const subTabs = [
+    { key: "customers", label: "Customer Receipts" },
+    { key: "suppliers", label: "Supplier Payments" },
+    { key: "salary", label: "Staff Salaries" },
+  ];
+
+  const resetFilters = () => { setSearch(""); setFilterMethod(""); setFilterStatus(""); setFilterFrom(""); setFilterTo(""); };
+
+  const inDateRange = (dateVal) => {
+    const ds = Array.isArray(dateVal)
+      ? `${dateVal[0]}-${String(dateVal[1]).padStart(2,"0")}-${String(dateVal[2]).padStart(2,"0")}`
+      : (dateVal || "");
+    if (filterFrom && ds < filterFrom) return false;
+    if (filterTo && ds > filterTo) return false;
+    return true;
+  };
+
+  const q = search.toLowerCase();
+
+  const filteredCustomer = customerPayments.filter(p => {
+    if (!inDateRange(p.paymentDate)) return false;
+    if (filterMethod && p.paymentMethod !== filterMethod) return false;
+    if (filterStatus) {
+      const vs = p.verificationStatus || "";
+      if (filterStatus === "CONFIRMED" && !["CONFIRMED","VERIFIED","DEPOSITED"].includes(vs)) return false;
+      if (filterStatus === "PENDING" && vs !== "PENDING") return false;
+      if (filterStatus === "NOT_RECEIVED" && !["NOT_RECEIVED","BOUNCED"].includes(vs)) return false;
+    }
+    if (q && !(
+      (p.invoice?.invoiceNumber || "").toLowerCase().includes(q) ||
+      (p.invoice?.customerName || "").toLowerCase().includes(q) ||
+      (p.receivedBy?.name || "").toLowerCase().includes(q) ||
+      (p.receivedByUser?.username || "").toLowerCase().includes(q) ||
+      (p.paymentMethod || "").toLowerCase().includes(q)
+    )) return false;
+    return true;
+  });
+
+  const filteredSupplier = supplierPayments.filter(p => {
+    if (!inDateRange(p.paymentDate)) return false;
+    if (filterMethod && p.paymentMethod !== filterMethod) return false;
+    if (q && !(
+      (p.supplierName || "").toLowerCase().includes(q) ||
+      (p.poNumber || "").toLowerCase().includes(q) ||
+      (p.paymentMethod || "").toLowerCase().includes(q)
+    )) return false;
+    return true;
+  });
+
+  const filteredSalary = salaryPayments.filter(p => {
+    if (!inDateRange(p.paymentDate)) return false;
+    if (filterMethod && p.paymentMethod !== filterMethod) return false;
+    if (q && !(
+      (p.staffName || "").toLowerCase().includes(q) ||
+      (p.employeeId || "").toLowerCase().includes(q) ||
+      (p.designation || "").toLowerCase().includes(q)
+    )) return false;
+    return true;
+  });
+
+  const totalCustomer = filteredCustomer.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const totalSupplier = filteredSupplier.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const totalSalary = filteredSalary.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+
+  const inputSm = { padding: "6px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "12px", background: t.inputBg, color: t.text };
+
+  return (
+    <div>
+      {/* Summary cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", marginBottom: "20px" }}>
         {[
-          { label: "PO Total", value: fmt2(orderAmt) },
-          { label: "Total Paid", value: fmt2(totalPaid), color: "#16a34a" },
-          { label: "Balance Due", value: fmt2(amtDue), color: amtDue > 0 ? "#ef4444" : "#16a34a", highlight: true },
+          { label: "Customer Receipts", value: totalCustomer, color: "#16a34a", count: filteredCustomer.length },
+          { label: "Supplier Payments", value: totalSupplier, color: "#ef4444", count: filteredSupplier.length },
+          { label: "Salary Paid", value: totalSalary, color: "#8b5cf6", count: filteredSalary.length },
         ].map(c => (
-          <div key={c.label} style={{ background: c.highlight ? "#eff6ff" : t.surfaceAlt, border: `1px solid ${c.highlight ? "#bfdbfe" : t.border}`, borderRadius: "8px", padding: "14px" }}>
+          <div key={c.label} style={{ background: t.surface, border: `1px solid ${c.color}44`, borderRadius: "8px", padding: "14px" }}>
             <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>{c.label}</div>
-            <div style={{ fontSize: "20px", fontWeight: 700, color: c.color || (c.highlight ? "#2563eb" : t.text) }}>{c.value}</div>
+            <div style={{ fontSize: "18px", fontWeight: 700, color: c.color }}>{fmt2(c.value)}</div>
+            <div style={{ fontSize: "11px", color: t.textSub, marginTop: "2px" }}>{c.count} transactions</div>
           </div>
         ))}
       </div>
 
-      {amtDue > 0 ? (
-        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px", marginBottom: "20px" }}>
-          <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "14px" }}>Pay Supplier</div>
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-end" }}>
+      {/* Filter bar */}
+      <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" }}>
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>Search</div>
+            <input style={{ ...inputSm, width: "200px" }} placeholder="Name, invoice, PO..." value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          <div>
+            <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>From</div>
+            <input style={{ ...inputSm, width: "140px" }} type="date" value={filterFrom} onChange={e => setFilterFrom(e.target.value)} />
+          </div>
+          <div>
+            <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>To</div>
+            <input style={{ ...inputSm, width: "140px" }} type="date" value={filterTo} onChange={e => setFilterTo(e.target.value)} />
+          </div>
+          <div>
+            <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>Method</div>
+            <select style={{ ...inputSm, width: "140px" }} value={filterMethod} onChange={e => setFilterMethod(e.target.value)}>
+              <option value="">All Methods</option>
+              {["CASH","UPI","BANK_TRANSFER","CHEQUE","NEFT","RTGS"].map(m => <option key={m} value={m}>{m.replace("_"," ")}</option>)}
+            </select>
+          </div>
+          {subTab === "customers" && (
             <div>
-              <label style={ps.label}>Amount (Rs.) *</label>
-              <input style={{ ...ps.input, width: "150px", marginBottom: 0 }} type="number" min="0" max={amtDue}
-                value={amount} onChange={e => setAmount(e.target.value)} />
-            </div>
-            <div>
-              <label style={ps.label}>Date</label>
-              <input style={{ ...ps.input, width: "150px", marginBottom: 0 }} type="date" value={date} onChange={e => setDate(e.target.value)} />
-            </div>
-            <div>
-              <label style={ps.label}>Method</label>
-              <select style={{ ...ps.input, width: "150px", marginBottom: 0 }} value={method} onChange={e => setMethod(e.target.value)}>
-                {METHODS.map(m => <option key={m} value={m}>{m.replace("_", " ")}</option>)}
+              <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>Status</div>
+              <select style={{ ...inputSm, width: "150px" }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                <option value="">All Statuses</option>
+                <option value="CONFIRMED">Confirmed / Cleared</option>
+                <option value="PENDING">Pending Verification</option>
+                <option value="NOT_RECEIVED">Not Received / Bounced</option>
               </select>
             </div>
-            <div style={{ flex: "2 1 180px" }}>
-              <label style={ps.label}>Notes</label>
-              <input style={{ ...ps.input, marginBottom: 0 }} placeholder="Optional..." value={notes} onChange={e => setNotes(e.target.value)} />
-            </div>
-            <button style={ps.btnDanger} onClick={handlePay} disabled={loading}>{loading ? "Saving..." : "Pay"}</button>
-          </div>
+          )}
+          <button onClick={resetFilters} style={{ ...inputSm, background: "none", cursor: "pointer", color: "#6b7280", border: `1px solid ${t.border}`, borderRadius: "6px" }}>
+            Clear
+          </button>
         </div>
-      ) : (
-        <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "14px 16px", marginBottom: "20px", color: "#16a34a", fontWeight: 600 }}>
-          ✓ Fully paid
-        </div>
-      )}
+      </div>
 
-      {payments.length > 0 && (
-        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "20px" }}>
-          <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Payment History</div>
+      {/* Sub-tabs */}
+      <div style={{ display: "flex", gap: "4px", marginBottom: "16px", borderBottom: `1px solid ${t.border}` }}>
+        {subTabs.map(st => (
+          <button key={st.key} onClick={() => { setSubTab(st.key); setFilterStatus(""); }}
+            style={{ padding: "8px 18px", border: "none", background: "none", cursor: "pointer", fontSize: "13px",
+              fontWeight: subTab === st.key ? 700 : 400,
+              color: subTab === st.key ? "#2563eb" : t.textSub,
+              borderBottom: subTab === st.key ? "2px solid #2563eb" : "2px solid transparent",
+              marginBottom: "-1px" }}>
+            {st.label}
+          </button>
+        ))}
+      </div>
+
+      {loading && <div style={ps.alertInfo}>Loading...</div>}
+
+      {/* Customer Receipts */}
+      {subTab === "customers" && (
+        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", overflow: "hidden" }}>
           <table style={ps.table}>
             <thead><tr style={ps.thead}>
-              <th style={ps.th}>#</th><th style={ps.th}>Date</th><th style={ps.th}>Amount</th><th style={ps.th}>Method</th><th style={ps.th}>Notes</th>
+              <th style={ps.th}>Date</th><th style={ps.th}>Invoice</th><th style={ps.th}>Customer</th>
+              <th style={ps.th}>Amount</th><th style={ps.th}>Method</th><th style={ps.th}>Received By</th>
+              <th style={ps.th}>Destination</th><th style={ps.th}>Status</th><th style={ps.th}>Notes</th>
             </tr></thead>
             <tbody>
-              {payments.map((p, i) => (
+              {filteredCustomer.length === 0 && <tr><td colSpan={9} style={{ ...ps.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No records match filters</td></tr>}
+              {filteredCustomer.map(p => (
                 <tr key={p.id} style={ps.tr}>
-                  <td style={ps.td}>{i + 1}</td>
-                  <td style={ps.tdSub}>{p.paymentDate}</td>
-                  <td style={{ ...ps.td, color: "#ef4444", fontWeight: 600 }}>{fmt2(p.amount)}</td>
-                  <td style={ps.tdSub}>{p.paymentMethod?.replace("_", " ")}</td>
+                  <td style={ps.tdSub}>{fmtDate(p.paymentDate)}</td>
+                  <td style={{ ...ps.td, color: "#2563eb", fontWeight: 600, fontSize: "12px" }}>{p.invoice?.invoiceNumber || "-"}</td>
+                  <td style={{ ...ps.td, fontWeight: 600 }}>{p.invoice?.customerName || "-"}</td>
+                  <td style={{ ...ps.td, color: "#16a34a", fontWeight: 700 }}>{fmt2(p.amount)}</td>
+                  <td style={ps.tdSub}>{p.paymentMethod?.replace("_"," ")}</td>
+                  <td style={ps.td}>
+                    {p.receivedBy
+                      ? <span style={{ color: "#2563eb" }}>{p.receivedBy.name} <span style={{ fontSize: "10px", color: t.textSub }}>(Staff)</span></span>
+                      : p.receivedByUser
+                      ? <span style={{ color: "#8b5cf6" }}>{p.receivedByUser.username} <span style={{ fontSize: "10px", color: t.textSub }}>(Admin)</span></span>
+                      : <span style={{ color: "#16a34a", fontSize: "12px" }}>Company Direct</span>}
+                  </td>
+                  <td style={ps.tdSub}>{p.destination?.replace("_"," ") || "-"}</td>
+                  <td style={ps.td}>
+                    <span style={{ padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600,
+                      background: (VSTATUS_COLOR[p.verificationStatus] || "#6b7280") + "22",
+                      color: VSTATUS_COLOR[p.verificationStatus] || "#6b7280" }}>
+                      {p.verificationStatus || "-"}
+                    </span>
+                  </td>
                   <td style={ps.tdSub}>{p.notes || "-"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <div style={{ padding: "10px 16px", borderTop: `1px solid ${t.border}`, fontSize: "12px", color: t.textSub, display: "flex", justifyContent: "space-between" }}>
+            <span>{filteredCustomer.length} records</span>
+            <span style={{ fontWeight: 700, color: "#16a34a" }}>Total: {fmt2(totalCustomer)}</span>
+          </div>
         </div>
       )}
+
+      {/* Supplier Payments */}
+      {subTab === "suppliers" && (
+        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", overflow: "hidden" }}>
+          <table style={ps.table}>
+            <thead><tr style={ps.thead}>
+              <th style={ps.th}>Date</th><th style={ps.th}>PO Number</th><th style={ps.th}>Supplier</th>
+              <th style={ps.th}>Amount</th><th style={ps.th}>Method</th><th style={ps.th}>Notes</th>
+            </tr></thead>
+            <tbody>
+              {filteredSupplier.length === 0 && <tr><td colSpan={6} style={{ ...ps.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No records match filters</td></tr>}
+              {filteredSupplier.map(p => (
+                <tr key={p.id} style={ps.tr}>
+                  <td style={ps.tdSub}>{fmtDate(p.paymentDate)}</td>
+                  <td style={{ ...ps.td, color: "#2563eb", fontWeight: 600, fontSize: "12px" }}>{p.poNumber || "-"}</td>
+                  <td style={{ ...ps.td, fontWeight: 600 }}>{p.supplierName || "-"}</td>
+                  <td style={{ ...ps.td, color: "#ef4444", fontWeight: 700 }}>{fmt2(p.amount)}</td>
+                  <td style={ps.tdSub}>{p.paymentMethod?.replace("_"," ")}</td>
+                  <td style={ps.tdSub}>{p.notes || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ padding: "10px 16px", borderTop: `1px solid ${t.border}`, fontSize: "12px", color: t.textSub, display: "flex", justifyContent: "space-between" }}>
+            <span>{filteredSupplier.length} records</span>
+            <span style={{ fontWeight: 700, color: "#ef4444" }}>Total: {fmt2(totalSupplier)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Staff Salaries */}
+      {subTab === "salary" && (
+        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", overflow: "hidden" }}>
+          <table style={ps.table}>
+            <thead><tr style={ps.thead}>
+              <th style={ps.th}>Period</th><th style={ps.th}>Emp ID</th><th style={ps.th}>Staff Name</th>
+              <th style={ps.th}>Designation</th><th style={ps.th}>Amount</th><th style={ps.th}>Method</th>
+              <th style={ps.th}>Payment Date</th><th style={ps.th}>Notes</th>
+            </tr></thead>
+            <tbody>
+              {filteredSalary.length === 0 && <tr><td colSpan={8} style={{ ...ps.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No records match filters</td></tr>}
+              {filteredSalary.map(p => (
+                <tr key={p.id} style={ps.tr}>
+                  <td style={{ ...ps.td, fontWeight: 600, color: "#8b5cf6" }}>{MONTHS[(p.month || 1) - 1]} {p.year}</td>
+                  <td style={{ ...ps.td, fontSize: "11px", color: "#2563eb", fontWeight: 600 }}>{p.employeeId || "-"}</td>
+                  <td style={{ ...ps.td, fontWeight: 600 }}>{p.staffName || "-"}</td>
+                  <td style={ps.tdSub}>{p.designation || "-"}</td>
+                  <td style={{ ...ps.td, color: "#8b5cf6", fontWeight: 700 }}>{fmt2(p.amount)}</td>
+                  <td style={ps.tdSub}>{p.paymentMethod?.replace("_"," ")}</td>
+                  <td style={ps.tdSub}>{fmtDate(p.paymentDate)}</td>
+                  <td style={ps.tdSub}>{p.notes || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ padding: "10px 16px", borderTop: `1px solid ${t.border}`, fontSize: "12px", color: t.textSub, display: "flex", justifyContent: "space-between" }}>
+            <span>{filteredSalary.length} records</span>
+            <span style={{ fontWeight: 700, color: "#8b5cf6" }}>Total: {fmt2(totalSalary)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function PaymentsDashboard({ ps }) {
+  const { t } = ps;
+  const [allPayments, setAllPayments] = useState([]);
+  const [overdueCheques, setOverdueCheques] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      getAllPayments().catch(() => []),
+      getPendingCheques().catch(() => []),
+    ]).then(([pays, cheques]) => {
+      setAllPayments(pays);
+      setOverdueCheques(cheques.filter(c => {
+        const d = c.chequeDepositDate;
+        const ds = Array.isArray(d) ? `${d[0]}-${String(d[1]).padStart(2,"0")}-${String(d[2]).padStart(2,"0")}` : d;
+        return ds && ds <= new Date().toISOString().split("T")[0];
+      }));
+    }).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return null;
+
+  const total = allPayments.reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const confirmed = allPayments.filter(p => ["CONFIRMED","VERIFIED","DEPOSITED"].includes(p.verificationStatus))
+    .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const pending = allPayments.filter(p => p.verificationStatus === "PENDING")
+    .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const unassigned = allPayments.filter(p => !p.receivedBy && !p.receivedByUser && p.destination !== "COMPANY_DIRECT")
+    .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const companyDirect = allPayments.filter(p => p.destination === "COMPANY_DIRECT" && ["CONFIRMED","DEPOSITED"].includes(p.verificationStatus))
+    .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const staffHeld = allPayments.filter(p => p.destination === "STAFF_WALLET")
+    .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const adminHeld = allPayments.filter(p => p.destination === "ADMIN_WALLET" && p.verificationStatus === "VERIFIED")
+    .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+
+  return (
+    <div style={{ marginBottom: "24px" }}>
+      {/* Overdue cheque warning */}
+      {overdueCheques.length > 0 && (
+        <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "12px 16px", marginBottom: "16px", display: "flex", alignItems: "center", gap: "10px" }}>
+          <span style={{ fontSize: "18px" }}>⚠️</span>
+          <div>
+            <div style={{ fontWeight: 700, color: "#dc2626", fontSize: "13px" }}>
+              {overdueCheques.length} cheque{overdueCheques.length > 1 ? "s" : ""} due for deposit confirmation
+            </div>
+            <div style={{ fontSize: "12px", color: "#ef4444" }}>
+              {overdueCheques.map(c => `${c.invoice?.invoiceNumber || "—"} (${fmt2(c.amount)})`).join(" · ")}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unassigned warning */}
+      {unassigned > 0 && (
+        <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "12px 16px", marginBottom: "16px", display: "flex", alignItems: "center", gap: "10px" }}>
+          <span style={{ fontSize: "18px" }}>⚠️</span>
+          <div>
+            <div style={{ fontWeight: 700, color: "#92400e", fontSize: "13px" }}>Unassigned payments: {fmt2(unassigned)}</div>
+            <div style={{ fontSize: "12px", color: "#b45309" }}>These payments have no staff or admin assigned — check and update them.</div>
+          </div>
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
+        {[
+          { label: "Total Collected", value: total, color: "#2563eb" },
+          { label: "Confirmed / Cleared", value: confirmed, color: "#16a34a" },
+          { label: "Pending Verification", value: pending, color: "#f59e0b" },
+          { label: "Direct to Company", value: companyDirect, color: "#16a34a" },
+          { label: "Held by Staff", value: staffHeld, color: staffHeld > 0 ? "#ef4444" : "#16a34a" },
+          { label: "Held by Admins", value: adminHeld, color: adminHeld > 0 ? "#f59e0b" : "#16a34a" },
+        ].map(c => (
+          <div key={c.label} style={{ background: t.surface, border: `1px solid ${c.color}44`, borderRadius: "8px", padding: "14px" }}>
+            <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>{c.label}</div>
+            <div style={{ fontSize: "17px", fontWeight: 700, color: c.color }}>{fmt2(c.value)}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -276,131 +1126,20 @@ function POPayPage({ po, onBack, onDone, ps }) {
 function PaymentsPage() {
   const ps = usePageStyles();
   const { t } = ps;
+  const { user, hasAccess } = useAuth();
+  const isAdmin = user?.role === "ADMIN";
+  const isAccounts = user?.role === "ACCOUNTS";
 
-  const [view, setView] = useState("list"); // "list" | "so-pay" | "po-pay"
-  const [selectedInv, setSelectedInv] = useState(null);
-  const [selectedPO, setSelectedPO] = useState(null);
+  const tabs = [
+    { key: "receive", label: "Receive Payment", show: hasAccess("payments") },
+    { key: "pay", label: "Pay Supplier", show: hasAccess("purchase") || hasAccess("payments") },
+    { key: "refunds", label: "Refunds", show: hasAccess("sales-returns") || hasAccess("payments") },
+    { key: "verify", label: "Verify Online", show: isAdmin },
+    { key: "cheques", label: "Cheques", show: isAdmin || isAccounts },
+    { key: "history", label: "History", show: hasAccess("payments") },
+  ].filter(tab => tab.show);
 
-  const [invoices, setInvoices] = useState([]);
-  const [purchaseOrders, setPurchaseOrders] = useState([]);
-  const [salesReturns, setSalesReturns] = useState([]);
-  const [returnRefundMap, setReturnRefundMap] = useState({});
-  const [wallet, setWallet] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [searchReceive, setSearchReceive] = useState("");
-  const [searchPay, setSearchPay] = useState("");
-  const [searchRefund, setSearchRefund] = useState("");
-  const [receiveFilter, setReceiveFilter] = useState("all");
-  const [payFilter, setPayFilter] = useState("all");
-  const [tab, setTab] = useState("receive");
-
-  // Inline refund expand
-  const [expandedRefundId, setExpandedRefundId] = useState(null);
-  const [expandedRefundTxns, setExpandedRefundTxns] = useState({});
-  const [inlineRefundForm, setInlineRefundForm] = useState({});
-  const [refundFilter, setRefundFilter] = useState("all");
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [inv, pos, w, rets] = await Promise.all([getInvoiceSummaries(), getPurchaseOrders(), getWalletData(), getSalesReturns()]);
-      setInvoices(inv); setPurchaseOrders(pos); setWallet(w); setSalesReturns(rets);
-      const map = {};
-      await Promise.all(rets.map(async r => {
-        try { map[r.id] = parseFloat(await getTotalRefunded(r.id)) || 0; }
-        catch { map[r.id] = 0; }
-      }));
-      setReturnRefundMap(map);
-      setError("");
-    } catch { setError("Failed to load data"); }
-    finally { setLoading(false); }
-  };
-
-  useEffect(() => { load(); }, []);
-
-  // ── Sub-page routing ──────────────────────────────────────────────────────
-  if (view === "so-pay" && selectedInv) {
-    return (
-      <MainLayout>
-        <SOPayPage inv={selectedInv} ps={ps} onBack={() => { setView("list"); setSelectedInv(null); }} onDone={load} />
-      </MainLayout>
-    );
-  }
-  if (view === "po-pay" && selectedPO) {
-    return (
-      <MainLayout>
-        <POPayPage po={selectedPO} ps={ps} onBack={() => { setView("list"); setSelectedPO(null); }} onDone={load} />
-      </MainLayout>
-    );
-  }
-
-  const filteredReceive = invoices.filter(i => {
-    const status = (i.paymentStatus || "PENDING").toUpperCase();
-    const filterStatus = status === "PAID" ? "paid" : status === "PARTIALLY_PAID" ? "partial" : "pending";
-    if (receiveFilter !== "all" && filterStatus !== receiveFilter) return false;
-    const q = searchReceive.toLowerCase();
-    return !q || i.invoiceNumber?.toLowerCase().includes(q) || i.customerName?.toLowerCase().includes(q);
-  });
-
-  const filteredPay = purchaseOrders.filter(p => {
-    const paid = parseFloat(p.amountPaid || 0);
-    const due = Math.max(0, parseFloat(p.totalAmount || 0) - paid);
-    const filterStatus = paid === 0 ? "pending" : due === 0 ? "paid" : "partial";
-    if (payFilter !== "all" && filterStatus !== payFilter) return false;
-    const q = searchPay.toLowerCase();
-    return !q || p.poNumber?.toLowerCase().includes(q) || p.supplier?.name?.toLowerCase().includes(q);
-  });
-
-  const filteredRefunds = salesReturns.filter(r => {
-    const total = parseFloat(r.totalAmount || 0);
-    const refunded = returnRefundMap[r.id] || 0;
-    const pending = Math.max(0, total - refunded);
-    const status = refunded === 0 ? "pending" : pending === 0 ? "completed" : "partial";
-    if (refundFilter !== "all" && status !== refundFilter) return false;
-    const q = searchRefund.toLowerCase();
-    return !q || r.returnNumber?.toLowerCase().includes(q) ||
-      r.invoice?.invoiceNumber?.toLowerCase().includes(q) ||
-      r.invoice?.customer?.name?.toLowerCase().includes(q);
-  });
-
-  const totalPendingRefunds = salesReturns.reduce((s, r) =>
-    s + Math.max(0, parseFloat(r.totalAmount || 0) - (returnRefundMap[r.id] || 0)), 0);
-  const totalToReceive = filteredReceive.reduce((s, i) => s + parseFloat(i.dueAmount || 0), 0);
-  const totalToPay = filteredPay.reduce((s, p) =>
-    s + Math.max(0, parseFloat(p.totalAmount || 0) - parseFloat(p.amountPaid || 0)), 0);
-
-  // Refund inline expand
-  const toggleExpandRefund = async (r) => {
-    if (expandedRefundId === r.id) { setExpandedRefundId(null); return; }
-    setExpandedRefundId(r.id);
-    if (!expandedRefundTxns[r.id]) {
-      try {
-        const txns = await getRefundsByReturn(r.id);
-        setExpandedRefundTxns(prev => ({ ...prev, [r.id]: txns }));
-      } catch { setExpandedRefundTxns(prev => ({ ...prev, [r.id]: [] })); }
-    }
-  };
-
-  const handleInlineRefund = async (r) => {
-    const form = inlineRefundForm[r.id] || {};
-    if (!form.amount || parseFloat(form.amount) <= 0) { setError("Enter a valid amount"); return; }
-    try {
-      setLoading(true); setError("");
-      await recordRefund(r.id, {
-        amount: parseFloat(form.amount),
-        refundDate: form.date || new Date().toISOString().split("T")[0],
-        paymentMethod: form.method || "CASH",
-        notes: form.notes || ""
-      });
-      setInlineRefundForm(prev => ({ ...prev, [r.id]: {} }));
-      const [txns, total, w] = await Promise.all([getRefundsByReturn(r.id), getTotalRefunded(r.id), getWalletData()]);
-      setExpandedRefundTxns(prev => ({ ...prev, [r.id]: txns }));
-      setReturnRefundMap(prev => ({ ...prev, [r.id]: parseFloat(total) || 0 }));
-      setWallet(w);
-    } catch (e) { setError(e.response?.data?.message || "Failed to record refund"); }
-    finally { setLoading(false); }
-  };
+  const [activeTab, setActiveTab] = useState(tabs[0]?.key || "receive");
 
   return (
     <MainLayout>
@@ -408,278 +1147,27 @@ function PaymentsPage() {
         <h2 style={{ margin: 0 }}>Payments</h2>
       </div>
 
-      {error && <div style={ps.alertError}>{error}</div>}
-      {loading && <div style={ps.alertInfo}>Loading...</div>}
-
-      {/* Wallet summary */}
-      {wallet && (
-        <div style={{ display: "flex", gap: "12px", marginBottom: "24px", flexWrap: "wrap" }}>
-          {[
-            { label: "Total Received", value: wallet.totalReceived, color: t.success },
-            { label: "Total Paid (Suppliers)", value: wallet.totalPaid, color: t.danger },
-            { label: "Wallet Balance", value: wallet.walletBalance, color: parseFloat(wallet.walletBalance) >= 0 ? t.success : t.danger, big: true },
-            { label: "Still to Receive", value: wallet.totalToReceive, color: t.warning },
-            { label: "Still to Pay", value: wallet.totalToPay, color: t.purple },
-          ].map(c => (
-            <div key={c.label} style={{ ...ps.card, borderColor: c.color, flex: 1, minWidth: "140px" }}>
-              <div style={ps.cardLabel}>{c.label}</div>
-              <div style={{ ...ps.cardValue, color: c.color, fontSize: c.big ? "22px" : undefined }}>{fmt2(c.value)}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      <PaymentsDashboard ps={ps} />
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: "4px", marginBottom: "16px", borderBottom: `2px solid ${t.border}` }}>
-        <button onClick={() => setTab("receive")} style={ps.tabBtn(tab === "receive", t.success)}>📥 Receive (Customers)</button>
-        <button onClick={() => setTab("pay")} style={ps.tabBtn(tab === "pay", t.danger)}>📤 Pay (Suppliers)</button>
-        <button onClick={() => setTab("refunds")} style={ps.tabBtn(tab === "refunds", t.purple)}>
-          💸 Refunds
-          {totalPendingRefunds > 0 && (
-            <span style={{ marginLeft: "6px", background: t.danger, color: "white", borderRadius: "10px", padding: "1px 7px", fontSize: "11px" }}>
-              {filteredRefunds.length}
-            </span>
-          )}
-        </button>
+      <div style={{ display: "flex", gap: "4px", marginBottom: "24px", borderBottom: `2px solid ${t.border}` }}>
+        {tabs.map(tab => (
+          <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+            style={{ padding: "10px 20px", border: "none", background: "none", cursor: "pointer", fontSize: "14px", fontWeight: activeTab === tab.key ? 700 : 400,
+              color: activeTab === tab.key ? "#2563eb" : t.textSub,
+              borderBottom: activeTab === tab.key ? "2px solid #2563eb" : "2px solid transparent",
+              marginBottom: "-2px", borderRadius: "0" }}>
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* TO RECEIVE */}
-      {tab === "receive" && (
-        <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 600, color: t.success }}>Total Due: {fmt2(totalToReceive)}</div>
-              {[["all","All"],["pending","Pending"],["partial","Partial"],["paid","Paid"]].map(([f, label]) => (
-                <button key={f} onClick={() => setReceiveFilter(f)} style={ps.filterPill(receiveFilter === f, t.success)}>{label}</button>
-              ))}
-            </div>
-            <input style={{ ...ps.input, width: "220px", marginBottom: 0 }} placeholder="Search invoice, customer..."
-              value={searchReceive} onChange={e => setSearchReceive(e.target.value)} />
-          </div>
-          <div style={ps.tableWrap}>
-            <table style={ps.table}>
-              <thead><tr style={ps.thead}>
-                <th style={ps.th}>Invoice #</th><th style={ps.th}>Date</th><th style={ps.th}>Customer</th>
-                <th style={ps.th}>Total</th><th style={ps.th}>Received</th><th style={ps.th}>Due</th>
-                <th style={ps.th}>Status</th><th style={ps.th}>Action</th>
-              </tr></thead>
-              <tbody>
-                {filteredReceive.length === 0 && !loading && (
-                  <tr><td colSpan={8} style={{ ...ps.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No invoices found</td></tr>
-                )}
-                {filteredReceive.map(inv => (
-                  <tr key={inv.id} style={ps.tr}>
-                    <td style={{ ...ps.td, fontWeight: 600 }}>{inv.invoiceNumber}</td>
-                    <td style={ps.tdSub}>{inv.invoiceDate}</td>
-                    <td style={ps.td}>{inv.customerName || "-"}</td>
-                    <td style={ps.td}>{fmt2(inv.totalAmount)}</td>
-                    <td style={{ ...ps.td, color: "#16a34a" }}>{fmt2(inv.paidAmount)}</td>
-                    <td style={{ ...ps.td, color: parseFloat(inv.dueAmount || 0) > 0 ? "#dc2626" : "#16a34a", fontWeight: 600 }}>{fmt2(inv.dueAmount)}</td>
-                    <td style={ps.td}>
-                      <span style={{ padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, background: (PAY_COLORS[inv.paymentStatus] || "#6b7280") + "22", color: PAY_COLORS[inv.paymentStatus] || "#6b7280" }}>
-                        {inv.paymentStatus || "PENDING"}
-                      </span>
-                    </td>
-                    <td style={ps.td}>
-                      <button style={ps.btnSmSuccess} onClick={() => { setSelectedInv(inv); setView("so-pay"); }}>
-                        {parseFloat(inv.dueAmount || 0) > 0 ? "Record Payment" : "View"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      {/* TO PAY */}
-      {tab === "pay" && (
-        <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 600, color: t.danger }}>Total Due: {fmt2(totalToPay)}</div>
-              {[["all","All"],["pending","Pending"],["partial","Partial"],["paid","Paid"]].map(([f, label]) => (
-                <button key={f} onClick={() => setPayFilter(f)} style={ps.filterPill(payFilter === f, t.danger)}>{label}</button>
-              ))}
-            </div>
-            <input style={{ ...ps.input, width: "220px", marginBottom: 0 }} placeholder="Search PO#, supplier..."
-              value={searchPay} onChange={e => setSearchPay(e.target.value)} />
-          </div>
-          <div style={ps.tableWrap}>
-            <table style={ps.table}>
-              <thead><tr style={ps.thead}>
-                <th style={ps.th}>PO #</th><th style={ps.th}>Date</th><th style={ps.th}>Supplier</th>
-                <th style={ps.th}>Order Amt</th><th style={ps.th}>Paid</th><th style={ps.th}>Due</th>
-                <th style={ps.th}>Status</th><th style={ps.th}>Action</th>
-              </tr></thead>
-              <tbody>
-                {filteredPay.length === 0 && !loading && (
-                  <tr><td colSpan={8} style={{ ...ps.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No purchase orders found</td></tr>
-                )}
-                {filteredPay.map(po => {
-                  const paid = parseFloat(po.amountPaid || 0);
-                  const due = Math.max(0, parseFloat(po.totalAmount || 0) - paid);
-                  return (
-                    <tr key={po.id} style={ps.tr}>
-                      <td style={{ ...ps.td, fontWeight: 600 }}>{po.poNumber}</td>
-                      <td style={ps.tdSub}>{po.orderDate}</td>
-                      <td style={ps.td}>{po.supplier?.name || "-"}</td>
-                      <td style={ps.td}>{fmt2(po.totalAmount)}</td>
-                      <td style={{ ...ps.td, color: "#16a34a" }}>{fmt2(paid)}</td>
-                      <td style={{ ...ps.td, color: due > 0 ? "#dc2626" : "#16a34a", fontWeight: 600 }}>{fmt2(due)}</td>
-                      <td style={ps.td}>
-                        <span style={{ padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, background: (due === 0 ? "#16a34a" : "#f59e0b") + "22", color: due === 0 ? "#16a34a" : "#f59e0b" }}>
-                          {due === 0 ? "PAID" : "PENDING"}
-                        </span>
-                      </td>
-                      <td style={ps.td}>
-                        <button style={ps.btnSmDanger} onClick={() => { setSelectedPO(po); setView("po-pay"); }}>
-                          {due > 0 ? "Pay" : "View"}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      {/* REFUNDS */}
-      {tab === "refunds" && (
-        <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-              <div style={{ fontWeight: 600, color: t.purple }}>Total Pending: {fmt2(totalPendingRefunds)}</div>
-              {["all","pending","partial","completed"].map(f => (
-                <button key={f} onClick={() => setRefundFilter(f)} style={ps.filterPill(refundFilter === f, t.purple)}>
-                  {f.charAt(0).toUpperCase() + f.slice(1)}
-                </button>
-              ))}
-            </div>
-            <input style={{ ...ps.input, width: "220px", marginBottom: 0 }} placeholder="Search return#, invoice, customer..."
-              value={searchRefund} onChange={e => setSearchRefund(e.target.value)} />
-          </div>
-          <div style={ps.tableWrap}>
-            <table style={ps.table}>
-              <thead><tr style={ps.thead}>
-                <th style={ps.th}></th>
-                <th style={ps.th}>Return #</th><th style={ps.th}>Date</th><th style={ps.th}>Invoice</th>
-                <th style={ps.th}>Customer</th><th style={ps.th}>Return Total</th>
-                <th style={ps.th}>Refunded</th><th style={ps.th}>Pending</th><th style={ps.th}>Status</th>
-              </tr></thead>
-              <tbody>
-                {filteredRefunds.length === 0 && !loading && (
-                  <tr><td colSpan={9} style={{ ...ps.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No records found</td></tr>
-                )}
-                {filteredRefunds.map(r => {
-                  const total = parseFloat(r.totalAmount || 0);
-                  const refunded = returnRefundMap[r.id] || 0;
-                  const pending = Math.max(0, total - refunded);
-                  const status = refunded === 0 ? "PENDING" : pending === 0 ? "COMPLETED" : "PARTIAL";
-                  const statusColor = { PENDING: "#ef4444", PARTIAL: "#f59e0b", COMPLETED: "#16a34a" }[status];
-                  const isExp = expandedRefundId === r.id;
-                  const fmtDate = (d) => Array.isArray(d) ? `${d[0]}-${String(d[1]).padStart(2,"0")}-${String(d[2]).padStart(2,"0")}` : d || "-";
-                  return (
-                    <Fragment key={r.id}>
-                      <tr style={{ ...ps.tr, cursor: "pointer", background: isExp ? t.purpleBg : t.surface, borderLeft: isExp ? `3px solid ${t.purple}` : "3px solid transparent" }}
-                        onClick={() => toggleExpandRefund(r)}>
-                        <td style={{ ...ps.td, width: "32px", textAlign: "center", color: "#6b7280", fontSize: "12px" }}>{isExp ? "▲" : "▼"}</td>
-                        <td style={{ ...ps.td, fontWeight: 600 }}>{r.returnNumber}</td>
-                        <td style={ps.tdSub}>{fmtDate(r.returnDate)}</td>
-                        <td style={ps.td}>{r.invoice?.invoiceNumber || "-"}</td>
-                        <td style={ps.td}>{r.invoice?.customer?.name || "-"}</td>
-                        <td style={ps.td}>{fmt2(total)}</td>
-                        <td style={{ ...ps.td, color: "#16a34a" }}>{fmt2(refunded)}</td>
-                        <td style={{ ...ps.td, color: pending > 0 ? "#ef4444" : "#16a34a", fontWeight: 600 }}>{fmt2(pending)}</td>
-                        <td style={ps.td}>
-                          <span style={{ padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, background: statusColor + "22", color: statusColor }}>{status}</span>
-                        </td>
-                      </tr>
-                      {isExp && (
-                        <tr>
-                          <td colSpan={9} style={{ padding: 0, background: t.purpleBg, borderBottom: `3px solid ${t.purple}` }}>
-                            <div style={{ padding: "16px 24px" }}>
-                              <div style={{ display: "flex", gap: "12px", marginBottom: "16px" }}>
-                                <div style={ps.card}><div style={ps.cardLabel}>Return Total</div><div style={ps.cardValue}>{fmt2(total)}</div></div>
-                                <div style={{ ...ps.card, borderColor: "#16a34a" }}><div style={ps.cardLabel}>Refunded</div><div style={{ ...ps.cardValue, color: "#16a34a" }}>{fmt2(refunded)}</div></div>
-                                <div style={{ ...ps.card, borderColor: pending > 0 ? "#ef4444" : "#16a34a" }}><div style={ps.cardLabel}>Pending</div><div style={{ ...ps.cardValue, color: pending > 0 ? "#ef4444" : "#16a34a" }}>{fmt2(pending)}</div></div>
-                              </div>
-                              {pending > 0 && (
-                                <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "14px", marginBottom: "14px" }}>
-                                  <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "10px", color: t.text }}>Pay Refund to Customer</div>
-                                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
-                                    <div style={{ flex: "1 1 100px" }}>
-                                      <label style={ps.label}>Amount (Rs.)</label>
-                                      <input style={{ ...ps.input, marginBottom: 0 }} type="number" max={pending}
-                                        value={inlineRefundForm[r.id]?.amount || ""}
-                                        onChange={e => setInlineRefundForm(prev => ({ ...prev, [r.id]: { ...prev[r.id], amount: e.target.value } }))} />
-                                    </div>
-                                    <div style={{ flex: "1 1 130px" }}>
-                                      <label style={ps.label}>Date</label>
-                                      <input style={{ ...ps.input, marginBottom: 0 }} type="date"
-                                        value={inlineRefundForm[r.id]?.date || new Date().toISOString().split("T")[0]}
-                                        onChange={e => setInlineRefundForm(prev => ({ ...prev, [r.id]: { ...prev[r.id], date: e.target.value } }))} />
-                                    </div>
-                                    <div style={{ flex: "1 1 120px" }}>
-                                      <label style={ps.label}>Method</label>
-                                      <select style={{ ...ps.input, marginBottom: 0 }} value={inlineRefundForm[r.id]?.method || "CASH"}
-                                        onChange={e => setInlineRefundForm(prev => ({ ...prev, [r.id]: { ...prev[r.id], method: e.target.value } }))}>
-                                        {METHODS.map(m => <option key={m} value={m}>{m.replace("_"," ")}</option>)}
-                                      </select>
-                                    </div>
-                                    <div style={{ flex: "2 1 150px" }}>
-                                      <label style={ps.label}>Notes</label>
-                                      <input style={{ ...ps.input, marginBottom: 0 }} placeholder="optional"
-                                        value={inlineRefundForm[r.id]?.notes || ""}
-                                        onChange={e => setInlineRefundForm(prev => ({ ...prev, [r.id]: { ...prev[r.id], notes: e.target.value } }))} />
-                                    </div>
-                                    <button style={{ ...ps.btnSuccess, background: t.purple }} onClick={() => handleInlineRefund(r)} disabled={loading}>Pay Refund</button>
-                                  </div>
-                                </div>
-                              )}
-                              {pending === 0 && (
-                                <div style={{ background: t.successBg, border: `1px solid ${t.successBorder}`, borderRadius: "6px", padding: "10px 14px", marginBottom: "12px", fontSize: "13px", color: t.success }}>
-                                  Full refund of {fmt2(total)} paid to customer.
-                                </div>
-                              )}
-                              <div style={{ fontWeight: 600, marginBottom: "8px", fontSize: "13px", color: t.text }}>Refund Transactions</div>
-                              <table style={ps.table}>
-                                <thead><tr style={ps.thead}>
-                                  <th style={ps.th}>#</th><th style={ps.th}>Date</th><th style={ps.th}>Amount</th><th style={ps.th}>Method</th><th style={ps.th}>Notes</th>
-                                </tr></thead>
-                                <tbody>
-                                  {(expandedRefundTxns[r.id] || []).length === 0 && (
-                                    <tr><td colSpan={5} style={{ ...ps.td, textAlign: "center", color: "#9ca3af" }}>No refund transactions yet</td></tr>
-                                  )}
-                                  {(expandedRefundTxns[r.id] || []).map((rf, i) => {
-                                    const fmtD = (d) => Array.isArray(d) ? `${d[0]}-${String(d[1]).padStart(2,"0")}-${String(d[2]).padStart(2,"0")}` : d || "-";
-                                    return (
-                                      <tr key={rf.id} style={ps.tr}>
-                                        <td style={ps.td}>{i + 1}</td>
-                                        <td style={ps.tdSub}>{fmtD(rf.refundDate)}</td>
-                                        <td style={{ ...ps.td, color: "#7c3aed", fontWeight: 600 }}>{fmt2(rf.amount)}</td>
-                                        <td style={ps.tdSub}>{rf.paymentMethod?.replace("_"," ")}</td>
-                                        <td style={ps.tdSub}>{rf.notes || "-"}</td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+      {activeTab === "receive" && <SOPayPage ps={ps} />}
+      {activeTab === "pay" && <POPayPage ps={ps} />}
+      {activeTab === "refunds" && <RefundsTab ps={ps} />}
+      {activeTab === "verify" && <VerifyTab ps={ps} />}
+      {activeTab === "cheques" && <ChequesTab ps={ps} />}
+      {activeTab === "history" && <HistoryTab ps={ps} />}
     </MainLayout>
   );
 }

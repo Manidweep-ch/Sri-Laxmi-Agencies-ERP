@@ -1,5 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
+import { useAuth } from "../context/AuthContext";
 import { getTheme } from "../theme";
 
 const PAGE_TITLES = {
@@ -13,9 +14,9 @@ const PAGE_TITLES = {
   "/sales-orders": { label: "Sales Orders",     icon: "📋" },
   "/invoices":     { label: "Invoices",         icon: "🧾" },
   "/payments":     { label: "Payments",         icon: "💳" },
-  "/credit-notes": { label: "Credit Notes",     icon: "📝" },
   "/sales-returns":{ label: "Sales Returns",    icon: "↩" },
   "/reports":      { label: "Reports",          icon: "📊" },
+  "/users":        { label: "Users & Roles",    icon: "👤" },
 };
 
 export default function Navbar() {
@@ -23,13 +24,8 @@ export default function Navbar() {
   const t = getTheme(dark);
   const location = useLocation();
   const page = PAGE_TITLES[location.pathname] || { label: "ERP", icon: "▦" };
-  const user = localStorage.getItem("username") || "Admin";
-
-  const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("username");
-    window.location = "/";
-  };
+  const { user, logout } = useAuth();
+  const username = user?.username || "User";
 
   return (
     <header style={{
@@ -67,9 +63,9 @@ export default function Navbar() {
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: "11px", color: "white", fontWeight: 800,
           }}>
-            {user.charAt(0).toUpperCase()}
+            {username.charAt(0).toUpperCase()}
           </div>
-          <span style={{ fontSize: "13px", fontWeight: 600, color: t.text }}>{user}</span>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: t.text }}>{username}</span>
         </div>
 
         <button onClick={logout} style={{

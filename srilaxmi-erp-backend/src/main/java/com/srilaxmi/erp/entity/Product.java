@@ -1,6 +1,7 @@
 package com.srilaxmi.erp.entity;
 
 import jakarta.persistence.*;
+import com.srilaxmi.erp.entity.Supplier;
 
 @Entity
 @Table(name = "products")
@@ -21,6 +22,14 @@ public class Product {
     private double gst;
 
     private boolean active = true;
+
+    // Reorder management
+    private Integer reorderLevel;   // trigger alert when stock falls below this
+    private Integer reorderQty;     // how many units to order when reordering
+
+    @ManyToOne
+    @JoinColumn(name = "preferred_supplier_id")
+    private Supplier preferredSupplier;
 
     @ManyToOne
     @JoinColumn(name = "brand_id")
@@ -101,6 +110,15 @@ public class Product {
 	}
 
 	public void setId(Long id) {
-    this.id = id;
-}
+        this.id = id;
+    }
+
+    public Integer getReorderLevel() { return reorderLevel; }
+    public void setReorderLevel(Integer reorderLevel) { this.reorderLevel = reorderLevel; }
+
+    public Integer getReorderQty() { return reorderQty; }
+    public void setReorderQty(Integer reorderQty) { this.reorderQty = reorderQty; }
+
+    public Supplier getPreferredSupplier() { return preferredSupplier; }
+    public void setPreferredSupplier(Supplier preferredSupplier) { this.preferredSupplier = preferredSupplier; }
 }

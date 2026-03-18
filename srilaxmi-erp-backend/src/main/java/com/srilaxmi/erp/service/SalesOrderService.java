@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,10 +15,12 @@ import com.srilaxmi.erp.entity.Product;
 import com.srilaxmi.erp.entity.SalesOrder;
 import com.srilaxmi.erp.entity.SalesOrderItem;
 import com.srilaxmi.erp.entity.SalesOrderStatus;
+import com.srilaxmi.erp.entity.Staff;
 import com.srilaxmi.erp.repository.CustomerRepository;
 import com.srilaxmi.erp.repository.ProductRepository;
 import com.srilaxmi.erp.repository.SalesOrderItemRepository;
 import com.srilaxmi.erp.repository.SalesOrderRepository;
+import com.srilaxmi.erp.repository.StaffRepository;
 
 @Service
 public class SalesOrderService {
@@ -27,6 +30,7 @@ public class SalesOrderService {
     @Autowired private ProductRepository productRepository;
     @Autowired private CustomerRepository customerRepository;
     @Autowired private StockBatchService stockBatchService;
+    @Autowired private StaffRepository staffRepository;
 
     @Transactional
     public SalesOrder saveOrder(SalesOrder order) {
@@ -42,6 +46,16 @@ public class SalesOrderService {
         order.setOrderNumber("SO-" + System.currentTimeMillis());
         order.setOrderDate(LocalDate.now());
         order.setStatus(SalesOrderStatus.DRAFT);
+
+        // Stamp who created this order
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        order.setCreatedBy(username);
+
+        // Resolve createdByStaff if provided
+        if (order.getCreatedByStaff() != null && order.getCreatedByStaff().getId() != null) {
+            staffRepository.findById(order.getCreatedByStaff().getId())
+                .ifPresent(order::setCreatedByStaff);
+        }
 
         List<SalesOrderItem> items = order.getItems();
         order.setItems(null);

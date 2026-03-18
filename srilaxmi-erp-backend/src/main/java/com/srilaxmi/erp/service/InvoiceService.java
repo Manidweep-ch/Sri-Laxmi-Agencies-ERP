@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
 
 import com.srilaxmi.erp.dto.InvoiceSummary;
 import com.srilaxmi.erp.entity.Invoice;
-import com.srilaxmi.erp.repository.CreditNoteRepository;
+import com.srilaxmi.erp.entity.Staff;
 import com.srilaxmi.erp.repository.InvoiceRepository;
 import com.srilaxmi.erp.repository.PaymentRepository;
 
@@ -22,9 +22,6 @@ public class InvoiceService {
 
     @Autowired
     private PaymentRepository paymentRepository;
-
-    @Autowired
-    private CreditNoteRepository creditNoteRepository;
 
     public Invoice saveInvoice(Invoice invoice){
         if (invoice == null) {
@@ -87,14 +84,21 @@ public class InvoiceService {
                     ? inv.getPurchaseOrder().getSupplier().getName() : null);
                 BigDecimal total = inv.getTotalAmount() != null ? inv.getTotalAmount() : BigDecimal.ZERO;
                 BigDecimal paid = paymentRepository.sumByInvoiceId(inv.getId());
-                BigDecimal credited = creditNoteRepository.sumByInvoiceId(inv.getId());
                 s.setTotalAmount(total);
                 s.setPaidAmount(paid);
-                s.setDueAmount(total.subtract(paid).subtract(credited).max(BigDecimal.ZERO));
+                s.setDueAmount(total.subtract(paid).max(BigDecimal.ZERO));
                 s.setPaymentStatus(inv.getPaymentStatus());
                 s.setInvoiceType(inv.getInvoiceType());
                 s.setSalesOrderId(inv.getSalesOrder() != null ? inv.getSalesOrder().getId() : null);
                 s.setPurchaseOrderId(inv.getPurchaseOrder() != null ? inv.getPurchaseOrder().getId() : null);
+                // Stamp who created the linked SO or PO — prefer staff name over username
+                if (inv.getSalesOrder() != null) {
+                    Staff staff = inv.getSalesOrder().getCreatedByStaff();
+                    s.setCreatedBy(staff != null ? staff.getName() : inv.getSalesOrder().getCreatedBy());
+                } else if (inv.getPurchaseOrder() != null) {
+                    Staff staff = inv.getPurchaseOrder().getCreatedByStaff();
+                    s.setCreatedBy(staff != null ? staff.getName() : inv.getPurchaseOrder().getCreatedBy());
+                }
                 return s;
             }).collect(Collectors.toList());
     }

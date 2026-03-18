@@ -5,6 +5,7 @@ import com.srilaxmi.erp.repository.UserRepository;
 import com.srilaxmi.erp.entity.User;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
@@ -47,6 +48,18 @@ public class AuthController {
 
         Map<String, String> response = new HashMap<>();
         response.put("token", token);
+        response.put("username", username);
+        response.put("userId", user.getId() != null ? user.getId().toString() : "");
+        response.put("role", user.getRole() != null ? user.getRole().getName() : "USER");
+        return response;
+    }
+
+    @GetMapping("/me")
+    public Map<String, String> me() {
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        User user = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("User not found"));
+        Map<String, String> response = new HashMap<>();
         response.put("username", username);
         response.put("userId", user.getId() != null ? user.getId().toString() : "");
         response.put("role", user.getRole() != null ? user.getRole().getName() : "USER");

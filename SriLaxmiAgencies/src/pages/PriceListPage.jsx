@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import MainLayout from "../layout/MainLayout";
 import { getPrices, createPrice, updatePrice } from "../services/priceService";
 import { getProducts, createProduct } from "../services/productService";
+import { getSuppliers } from "../services/supplierService";
 import { getBrands, createBrand } from "../services/brandService";
 import { getCategories, createCategory } from "../services/categoryService";
 import { usePageStyles } from "../hooks/usePageStyles";
 
-const emptyProductForm = { name: "", size: "", unit: "", hsnCode: "", gst: "", brandId: "", categoryId: "", newBrand: "", newCategory: "", costPrice: "", basePrice: "", baseDiscount: "" };
+const emptyProductForm = { name: "", size: "", unit: "", hsnCode: "", gst: "", brandId: "", categoryId: "", newBrand: "", newCategory: "", costPrice: "", basePrice: "", baseDiscount: "", reorderLevel: "", reorderQty: "", preferredSupplierId: "" };
 const emptyPriceForm = { productId: "", costPrice: "", basePrice: "", baseDiscount: "", validFrom: "" };
 
 export default function PriceListPage() {
@@ -14,6 +15,7 @@ export default function PriceListPage() {
   const [prices, setPrices] = useState([]);
   const [brands, setBrands] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPriceForm, setShowPriceForm] = useState(false);
@@ -38,7 +40,8 @@ export default function PriceListPage() {
     setLoading(true);
     try {
       const [p, pr, b, c] = await Promise.all([getProducts(), getPrices(), getBrands(), getCategories()]);
-      setProducts(p); setPrices(pr); setBrands(b); setCategories(c);
+      const s = await getSuppliers();
+      setProducts(p); setPrices(pr); setBrands(b); setCategories(c); setSuppliers(s);
     } catch { setError("Failed to load data"); }
     finally { setLoading(false); }
   };
@@ -85,6 +88,9 @@ export default function PriceListPage() {
         hsnCode: productForm.hsnCode, gst: parseFloat(productForm.gst) || 0,
         brand: productForm.brandId ? { id: parseInt(productForm.brandId) } : null,
         category: productForm.categoryId ? { id: parseInt(productForm.categoryId) } : null,
+        reorderLevel: productForm.reorderLevel ? parseInt(productForm.reorderLevel) : null,
+        reorderQty: productForm.reorderQty ? parseInt(productForm.reorderQty) : null,
+        preferredSupplier: productForm.preferredSupplierId ? { id: parseInt(productForm.preferredSupplierId) } : null,
       });
       if (productForm.basePrice) {
         await createPrice({ product: { id: saved.id }, costPrice: parseFloat(productForm.costPrice) || 0, basePrice: parseFloat(productForm.basePrice), baseDiscount: parseFloat(productForm.baseDiscount) || 0, validFrom: today });
@@ -169,6 +175,20 @@ export default function PriceListPage() {
                 <input style={{ ...inp, flex: 1 }} placeholder="New category name" value={productForm.newCategory} onChange={e => setProductForm(f => ({ ...f, newCategory: e.target.value }))} />
                 <button style={ps.btnSmPrimary} onClick={handleAddCategory}>Add</button>
               </div>
+            </div>
+          </div>
+          <div style={{ fontSize: "12px", fontWeight: 700, color: t.textSub, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "10px", marginTop: "4px" }}>
+            Reorder Settings (optional)
+          </div>
+          <div style={grid2}>
+            <div><label style={ps.label}>Reorder Level (trigger alert below this qty)</label><input style={inp} type="number" min="0" placeholder="e.g. 10" value={productForm.reorderLevel} onChange={e => setProductForm(f => ({ ...f, reorderLevel: e.target.value }))} /></div>
+            <div><label style={ps.label}>Reorder Qty (how many to order)</label><input style={inp} type="number" min="1" placeholder="e.g. 50" value={productForm.reorderQty} onChange={e => setProductForm(f => ({ ...f, reorderQty: e.target.value }))} /></div>
+            <div>
+              <label style={ps.label}>Preferred Supplier</label>
+              <select style={inp} value={productForm.preferredSupplierId} onChange={e => setProductForm(f => ({ ...f, preferredSupplierId: e.target.value }))}>
+                <option value="">None</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
             </div>
           </div>
           <div style={{ display: "flex", gap: "10px" }}>

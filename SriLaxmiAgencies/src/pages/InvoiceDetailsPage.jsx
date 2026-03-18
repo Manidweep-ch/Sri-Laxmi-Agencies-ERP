@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import MainLayout from "../layout/MainLayout";
-import { getInvoiceById, updateInvoicePaymentStatus } from "../services/invoiceService";
-import { getInvoiceItems } from "../services/invoiceItemService";
+import { getInvoiceById, updateInvoicePaymentStatus, getInvoiceItems } from "../services/invoiceService";
 
 function InvoiceDetailsPage() {
   const { id } = useParams();

@@ -193,8 +193,95 @@ public class ReportsController {
     }
 
     /**
+     * Outstanding Aging Report — buckets unpaid/partially-paid invoices by days overdue.
+     * Buckets: Current (not yet due), 1-30, 31-60, 61-90, 90+
+     */
+    @GetMapping("/aging")
+    public Map<String, Object> getAgingReport() {
+        LocalDate today = LocalDate.now();
+
+        List<Invoice> unpaid = invoiceService.getInvoices().stream()
+            .filter(inv -> inv.isActive()
+                && inv.getInvoiceType() != null && inv.getInvoiceType().equals("SO")
+                && !"PAID".equals(inv.getPaymentStatus()))
+            .collect(Collectors.toList());
+
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+
+        for (Invoice inv : unpaid) {
+            BigDecimal total = inv.getTotalAmount() != null ? inv.getTotalAmount() : BigDecimal.ZERO;
+            BigDecimal paid = paymentService.getAllPayments().stream()
+                .filter(p -> p.getInvoice() != null && p.getInvoice().getId().equals(inv.getId()))
+                .map(Payment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal outstanding = total.subtract(paid).max(BigDecimal.ZERO);
+            if (outstanding.compareTo(BigDecimal.ZERO) == 0) continue;
+
+            LocalDate due = inv.getDueDate();
+            int daysOverdue = 0;
+            String bucket;
+            if (due == null || !today.isAfter(due)) {
+                bucket = "Current";
+                daysOverdue = 0;
+            } else {
+                daysOverdue = (int) java.time.temporal.ChronoUnit.DAYS.between(due, today);
+                if (daysOverdue <= 30) bucket = "1-30 days";
+                else if (daysOverdue <= 60) bucket = "31-60 days";
+                else if (daysOverdue <= 90) bucket = "61-90 days";
+                else bucket = "90+ days";
+            }
+
+            Map<String, Object> row = new HashMap<>();
+            row.put("invoiceId", inv.getId());
+            row.put("invoiceNumber", inv.getInvoiceNumber());
+            row.put("invoiceDate", inv.getInvoiceDate() != null ? inv.getInvoiceDate().toString() : null);
+            row.put("dueDate", due != null ? due.toString() : null);
+            row.put("customerName", inv.getCustomer() != null ? inv.getCustomer().getName() : "—");
+            row.put("customerId", inv.getCustomer() != null ? inv.getCustomer().getId() : null);
+            row.put("customerPhone", inv.getCustomer() != null ? inv.getCustomer().getPhone() : null);
+            row.put("totalAmount", total);
+            row.put("paidAmount", paid);
+            row.put("outstandingAmount", outstanding);
+            row.put("daysOverdue", daysOverdue);
+            row.put("bucket", bucket);
+            row.put("paymentStatus", inv.getPaymentStatus());
+            rows.add(row);
+        }
+
+        // Sort by daysOverdue desc (most overdue first)
+        rows.sort((a, b) -> Integer.compare((int) b.get("daysOverdue"), (int) a.get("daysOverdue")));
+
+        // Bucket summary
+        String[] bucketOrder = {"Current", "1-30 days", "31-60 days", "61-90 days", "90+ days"};
+        List<Map<String, Object>> summary = new java.util.ArrayList<>();
+        for (String b : bucketOrder) {
+            List<Map<String, Object>> inBucket = rows.stream()
+                .filter(r -> b.equals(r.get("bucket"))).collect(Collectors.toList());
+            BigDecimal bucketTotal = inBucket.stream()
+                .map(r -> (BigDecimal) r.get("outstandingAmount"))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            Map<String, Object> s = new HashMap<>();
+            s.put("bucket", b);
+            s.put("count", inBucket.size());
+            s.put("total", bucketTotal);
+            summary.add(s);
+        }
+
+        BigDecimal grandTotal = rows.stream()
+            .map(r -> (BigDecimal) r.get("outstandingAmount"))
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("invoices", rows);
+        result.put("summary", summary);
+        result.put("grandTotal", grandTotal);
+        result.put("totalInvoices", rows.size());
+        result.put("asOf", today.toString());
+        return result;
+    }
+
+    /**
      * Profit margin report per product based on FIFO COGS recorded at invoice generation.
-     * Returns: productId, productName, totalQtySold, totalRevenue, totalCOGS, grossProfit, marginPct
      */
     @GetMapping("/profit-margin")
     public List<Map<String, Object>> getProfitMarginReport() {

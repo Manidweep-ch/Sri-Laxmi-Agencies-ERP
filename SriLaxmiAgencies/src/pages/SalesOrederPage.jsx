@@ -11,18 +11,22 @@ import { getProducts } from "../services/productService";
 import { getCurrentPrice } from "../services/priceService";
 import { getProductStock } from "../services/stockService";
 import { generateInvoiceFromSalesOrder } from "../services/invoiceService";
-import { createPayment } from "../services/paymentService";
+import { createPayment, getOutstanding, getPaymentsByInvoice } from "../services/paymentService";
+import { getUsers } from "../services/userService";
+import { getStaff } from "../services/staffService";
 import { usePageStyles } from "../hooks/usePageStyles";
 import { useTheme } from "../context/ThemeContext";
 import { getTheme } from "../theme";
+import DeliveryAssignmentPage from "./DeliveryAssignmentPage";
+import { getDeliveries } from "../services/deliveryService";
 
 const STATUS_LABELS = {
   DRAFT: "Draft", PENDING: "Pending", CONFIRMED: "Confirmed",
-  SHIPPED: "Goods Sent", INVOICED: "Invoiced", CANCELLED: "Cancelled"
+  SHIPPED: "Invoiced", INVOICED: "Invoiced", CANCELLED: "Cancelled"
 };
 const STATUS_COLORS = {
   DRAFT: "#6b7280", PENDING: "#f59e0b", CONFIRMED: "#2563eb",
-  SHIPPED: "#7c3aed", INVOICED: "#16a34a", CANCELLED: "#ef4444"
+  SHIPPED: "#16a34a", INVOICED: "#16a34a", CANCELLED: "#ef4444"
 };
 const METHODS = ["CASH", "UPI", "BANK_TRANSFER", "CHEQUE", "NEFT", "RTGS"];
 
@@ -91,6 +95,59 @@ function SearchDropdown({ placeholder, items, labelFn, onSelect, value, onChange
   );
 }
 
+// ── Staff selector dropdown (same pattern as PaymentsPage) ───────────────────
+function StaffDropdown({ staffList, value, onChange, placeholder = "Search staff..." }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const selected = staffList.find(s => s.id === value);
+  useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const filtered = staffList.filter(s =>
+    s.active !== false && (!query ||
+      s.name?.toLowerCase().includes(query.toLowerCase()) ||
+      s.employeeId?.toLowerCase().includes(query.toLowerCase()) ||
+      s.designation?.toLowerCase().includes(query.toLowerCase()))
+  );
+  const displayText = selected
+    ? `${selected.employeeId ? selected.employeeId + " · " : ""}${selected.name}`
+    : query;
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <input
+        style={{ width: "240px", padding: "7px 10px", border: `1px solid ${t.inputBorder}`, borderRadius: "6px", fontSize: "13px", background: t.inputBg, color: t.text, boxSizing: "border-box" }}
+        placeholder={placeholder}
+        value={open ? query : (selected ? displayText : "")}
+        onFocus={() => { setOpen(true); setQuery(""); }}
+        onChange={e => { setQuery(e.target.value); onChange(null); setOpen(true); }}
+      />
+      {selected && !open && (
+        <button onClick={() => { onChange(null); setQuery(""); }}
+          style={{ position: "absolute", right: "6px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: "14px", padding: "0 2px" }}>✕</button>
+      )}
+      {open && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: t.surface, border: `1px solid ${t.border}`, borderRadius: "6px", zIndex: 200, maxHeight: "200px", overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+          {filtered.map(s => (
+            <div key={s.id}
+              style={{ padding: "8px 12px", cursor: "pointer", fontSize: "13px", color: t.text, borderBottom: `1px solid ${t.border}`, display: "flex", gap: "8px", alignItems: "center" }}
+              onMouseDown={() => { onChange(s.id); setOpen(false); setQuery(""); }}>
+              <span style={{ fontSize: "11px", color: "#2563eb", fontWeight: 600, minWidth: "60px" }}>{s.employeeId || "—"}</span>
+              <span style={{ fontWeight: 600 }}>{s.name}</span>
+              <span style={{ fontSize: "11px", color: t.textSub }}>({s.designation || "Staff"})</span>
+            </div>
+          ))}
+          {filtered.length === 0 && <div style={{ padding: "10px 12px", fontSize: "13px", color: "#9ca3af" }}>No staff found</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── New SO Page ───────────────────────────────────────────────────────────────
 function NewSOPage({ customers, products, onBack, onCreated }) {
   const ps = usePageStyles();
@@ -105,9 +162,15 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
   const [productSearch, setProductSearch] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [finalPrice, setFinalPrice] = useState(""); // manual override for round figure
-  const [finalPriceEdited, setFinalPriceEdited] = useState(false); // true once user manually changed it
-  const [batchMap, setBatchMap] = useState({}); // { [productId]: [batches] }
+  const [finalPrice, setFinalPrice] = useState("");
+  const [finalPriceEdited, setFinalPriceEdited] = useState(false);
+  const [batchMap, setBatchMap] = useState({});
+  const [staffList, setStaffList] = useState([]);
+  const [createdByStaffId, setCreatedByStaffId] = useState(null);
+
+  useEffect(() => {
+    getStaff().then(setStaffList).catch(() => {});
+  }, []);
 
   // Compute totals using FIFO batch SPs when available, else fall back to price list
   const getLineSplits = (l) => {
@@ -172,6 +235,7 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
       await createSalesOrder({
         customer: { id: selectedCustomer.id },
         finalAmount: (finalPriceEdited && finalPrice !== "" && !isNaN(fp)) ? fp : null,
+        createdByStaff: createdByStaffId ? { id: createdByStaffId } : null,
         items: lines.map(l => {
           const splits = getLineSplits(l);
           const totalQty = splits.reduce((s, sp) => s + sp.qty, 0);
@@ -207,6 +271,11 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
             {selectedCustomer.gstNumber && <span>GST: {selectedCustomer.gstNumber}</span>}
           </div>
         )}
+        <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: `1px dashed ${t.border}` }}>
+          <label style={{ ...s.label, display: "block", marginBottom: "6px" }}>Bill Generated By (Staff)</label>
+          <StaffDropdown staffList={staffList} value={createdByStaffId} onChange={setCreatedByStaffId} placeholder="Search staff by name/ID..." />
+          {!createdByStaffId && <div style={{ fontSize: "11px", color: t.textSub, marginTop: "4px" }}>Optional — select the staff member generating this bill</div>}
+        </div>
       </div>
 
       <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
@@ -477,6 +546,7 @@ function EditSOPage({ order, products, onBack, onSaved }) {
           <span>✓ <strong style={{ color: t.text }}>{order.customer?.name}</strong></span>
           {order.customer?.phone && <span>📞 {order.customer.phone}</span>}
           {order.customer?.gstNumber && <span>GST: {order.customer.gstNumber}</span>}
+          {order.createdBy && <span style={{ marginLeft: "auto", fontSize: "11px", color: t.textSub }}>Created by: <strong style={{ color: t.text }}>{order.createdByStaff?.name || order.createdBy}</strong></span>}
         </div>
       </div>
 
@@ -589,51 +659,102 @@ function EditSOPage({ order, products, onBack, onSaved }) {
   );
 }
 
+const ONLINE_METHODS = ["UPI", "BANK_TRANSFER", "NEFT", "RTGS"];
+const VSTATUS_COLOR = {
+  CONFIRMED: "#16a34a", VERIFIED: "#16a34a", DEPOSITED: "#16a34a",
+  PENDING: "#f59e0b", NOT_RECEIVED: "#ef4444", BOUNCED: "#ef4444"
+};
+
 // ── Pay Page ──────────────────────────────────────────────────────────────────
 function PaySOPage({ order, onBack, onDone }) {
   const ps = usePageStyles();
   const { dark } = useTheme();
   const t = getTheme(dark);
-  const s = { label: ps.label, input: ps.input, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td, totalRow: ps.totalRow };
+  const s = { label: ps.label, input: ps.input, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td };
 
   const [summary, setSummary] = useState(null);
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState("CASH");
-  const [payDate, setPayDate] = useState(new Date().toISOString().split("T")[0]);
+  const [payments, setPayments] = useState([]);
+  const [staffList, setStaffList] = useState([]);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [form, setForm] = useState({ amount: "", paymentMethod: "CASH", paymentDate: new Date().toISOString().split("T")[0], notes: "", chequeDepositDate: "" });
+  const [cashWhere, setCashWhere] = useState("shop");
+  const [onlineWhere, setOnlineWhere] = useState("company");
+  const [receivedByStaffId, setReceivedByStaffId] = useState(null);
+  const [receivedByUserId, setReceivedByUserId] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { loadSummary(); }, []);
+  useEffect(() => {
+    loadData();
+    getStaff().then(setStaffList).catch(() => {});
+    getUsers().then(us => setAdminUsers(us.filter(u => (u.role?.name || u.role) === "ADMIN"))).catch(() => {});
+  }, []);
 
-  const loadSummary = async () => {
-    try { setSummary(await getSalesOrderSummary(order.id)); } catch { setError("Failed to load summary"); }
+  const loadData = async () => {
+    try {
+      const sum = await getSalesOrderSummary(order.id);
+      setSummary(sum);
+      if (sum?.invoiceId) {
+        const pays = await getPaymentsByInvoice(sum.invoiceId).catch(() => []);
+        setPayments(pays);
+        const bal = parseFloat(sum.balanceDue || 0);
+        setForm(f => ({ ...f, amount: bal > 0 ? bal.toFixed(2) : "" }));
+      }
+    } catch { setError("Failed to load summary"); }
   };
 
+  const isCash = form.paymentMethod === "CASH";
+  const isOnline = ONLINE_METHODS.includes(form.paymentMethod);
+  const isCheque = form.paymentMethod === "CHEQUE";
+  const balanceDue = parseFloat(summary?.balanceDue || 0);
+
   const handlePay = async () => {
-    const amt = parseFloat(amount);
+    const amt = parseFloat(form.amount);
     if (!amt || amt <= 0) { setError("Enter a valid amount"); return; }
-    if (summary && amt > parseFloat(summary.balanceDue)) { setError(`Exceeds balance due (Rs.${parseFloat(summary.balanceDue).toFixed(2)})`); return; }
+    if (amt > balanceDue) { setError(`Exceeds balance due (Rs.${balanceDue.toFixed(2)})`); return; }
     if (!summary?.invoiceId) { setError("No invoice found. Generate invoice first."); return; }
+    if (isCheque && !form.chequeDepositDate) { setError("Enter cheque deposit date"); return; }
+    if (isCash && cashWhere === "staff" && !receivedByStaffId) { setError("Select the staff who received cash"); return; }
+    if (isOnline && onlineWhere === "admin" && !receivedByUserId) { setError("Select the admin account"); return; }
+
+    const payload = {
+      invoice: { id: summary.invoiceId },
+      amount: amt,
+      paymentMethod: form.paymentMethod,
+      paymentDate: form.paymentDate,
+      notes: form.notes || null,
+      chequeDepositDate: isCheque ? form.chequeDepositDate : null,
+      receivedBy: (isCash && cashWhere === "staff" && receivedByStaffId) ? { id: receivedByStaffId } : null,
+      receivedByUser: (isOnline && onlineWhere === "admin" && receivedByUserId) ? { id: receivedByUserId } : null,
+    };
+
     try {
       setLoading(true); setError("");
-      await createPayment({ invoice: { id: summary.invoiceId }, amount: amt, paymentDate: payDate, paymentMethod: method });
-      setAmount("");
-      await loadSummary();
+      await createPayment(payload);
+      setForm(f => ({ ...f, notes: "", chequeDepositDate: "" }));
+      setReceivedByStaffId(null); setReceivedByUserId(null);
+      setCashWhere("shop"); setOnlineWhere("company");
+      await loadData();
       onDone();
     } catch (e) { setError(e.response?.data?.message || "Payment failed"); }
     finally { setLoading(false); }
   };
 
-  const balanceDue = parseFloat(summary?.balanceDue || 0);
+  const fmtDate = d => Array.isArray(d)
+    ? `${d[0]}-${String(d[1]).padStart(2,"0")}-${String(d[2]).padStart(2,"0")}`
+    : d || "-";
 
   return (
     <div>
-      <PageHeader title={`Payment — ${order.orderNumber}`} subtitle={`Customer: ${order.customer?.name}`} onBack={onBack} t={t} />
+      <PageHeader title={`Payment — ${order.orderNumber}`}
+        subtitle={`Customer: ${order.customer?.name}${order.createdBy ? ` · Created by: ${order.createdByStaff?.name || order.createdBy}` : ""}`}
+        onBack={onBack} t={t} />
       {error && <div style={ps.alertError}>{error}</div>}
 
       {summary && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+          {/* Summary cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "12px", marginBottom: "16px" }}>
             {[
               { label: "Invoice", value: summary.invoiceNumber || "—", isText: true },
               { label: "Total Amount", value: `Rs.${parseFloat(summary.totalAmount || 0).toFixed(2)}` },
@@ -647,19 +768,31 @@ function PaySOPage({ order, onBack, onDone }) {
             ))}
           </div>
 
-          {summary.payments?.length > 0 && (
+          {/* Payment history */}
+          {payments.length > 0 && (
             <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
               <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Payment History</div>
               <table style={s.table}>
-                <thead><tr style={s.thead}>
+                <thead><tr style={ps.thead}>
                   <th style={s.th}>Date</th><th style={s.th}>Amount</th><th style={s.th}>Method</th>
+                  <th style={s.th}>Received By</th><th style={s.th}>Status</th>
                 </tr></thead>
                 <tbody>
-                  {summary.payments.map(p => (
-                    <tr key={p.id} style={s.tr}>
-                      <td style={ps.tdSub}>{p.paymentDate || "—"}</td>
+                  {payments.map(p => (
+                    <tr key={p.id} style={ps.tr}>
+                      <td style={ps.tdSub}>{fmtDate(p.paymentDate)}</td>
                       <td style={{ ...s.td, fontWeight: 600, color: "#16a34a" }}>Rs.{parseFloat(p.amount || 0).toFixed(2)}</td>
-                      <td style={ps.tdSub}>{p.paymentMethod?.replace("_", " ") || "—"}</td>
+                      <td style={ps.tdSub}>{p.paymentMethod?.replace("_"," ") || "—"}</td>
+                      <td style={ps.tdSub}>
+                        {p.receivedBy ? `${p.receivedBy.name} (Staff)` : p.receivedByUser ? `${p.receivedByUser.username} (Admin)` : "Company Direct"}
+                      </td>
+                      <td style={s.td}>
+                        <span style={{ padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600,
+                          background: (VSTATUS_COLOR[p.verificationStatus] || "#6b7280") + "22",
+                          color: VSTATUS_COLOR[p.verificationStatus] || "#6b7280" }}>
+                          {p.verificationStatus}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -667,24 +800,99 @@ function PaySOPage({ order, onBack, onDone }) {
             </div>
           )}
 
+          {/* Record payment form */}
           {balanceDue > 0 ? (
             <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px" }}>
-              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "12px" }}>Record Payment</div>
-              <div style={{ display: "flex", gap: "10px", alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 700, fontSize: "14px", color: t.text, marginBottom: "14px" }}>Record Payment</div>
+
+              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-start" }}>
                 <div>
                   <label style={s.label}>Amount (Rs.) *</label>
-                  <input style={{ ...s.input, width: "140px" }} type="number" min="0" max={balanceDue} placeholder="0.00" value={amount} onChange={e => setAmount(e.target.value)} />
-                </div>
-                <div>
-                  <label style={s.label}>Date</label>
-                  <input style={{ ...s.input, width: "140px" }} type="date" value={payDate} onChange={e => setPayDate(e.target.value)} />
+                  <input style={{ ...s.input, width: "140px" }} type="number" min="0" max={balanceDue}
+                    value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
                 </div>
                 <div>
                   <label style={s.label}>Method</label>
-                  <select style={{ ...s.input, width: "140px" }} value={method} onChange={e => setMethod(e.target.value)}>
-                    {METHODS.map(m => <option key={m} value={m}>{m.replace("_", " ")}</option>)}
+                  <select style={{ ...s.input, width: "150px" }} value={form.paymentMethod}
+                    onChange={e => { setForm(f => ({ ...f, paymentMethod: e.target.value })); setCashWhere("shop"); setOnlineWhere("company"); setReceivedByStaffId(null); setReceivedByUserId(null); }}>
+                    {METHODS.map(m => <option key={m} value={m}>{m.replace("_"," ")}</option>)}
                   </select>
                 </div>
+                <div>
+                  <label style={s.label}>Date</label>
+                  <input style={{ ...s.input, width: "150px" }} type="date" value={form.paymentDate}
+                    onChange={e => setForm(f => ({ ...f, paymentDate: e.target.value }))} />
+                </div>
+              </div>
+
+              {/* CASH routing */}
+              {isCash && (
+                <div style={{ marginTop: "14px", padding: "12px", background: t.bg, borderRadius: "8px", border: `1px solid ${t.border}` }}>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: t.text, marginBottom: "8px" }}>Where was the cash received?</div>
+                  <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: t.text, cursor: "pointer" }}>
+                      <input type="radio" name="soPayCashWhere" value="shop" checked={cashWhere === "shop"} onChange={() => { setCashWhere("shop"); setReceivedByStaffId(null); }} />
+                      At shop / company
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: t.text, cursor: "pointer" }}>
+                      <input type="radio" name="soPayCashWhere" value="staff" checked={cashWhere === "staff"} onChange={() => setCashWhere("staff")} />
+                      Given to a staff member
+                    </label>
+                  </div>
+                  {cashWhere === "staff" && (
+                    <div style={{ marginTop: "10px" }}>
+                      <label style={{ ...s.label, display: "block", marginBottom: "4px" }}>Staff who received cash *</label>
+                      <StaffDropdown staffList={staffList} value={receivedByStaffId} onChange={setReceivedByStaffId} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ONLINE routing */}
+              {isOnline && (
+                <div style={{ marginTop: "14px", padding: "12px", background: t.bg, borderRadius: "8px", border: `1px solid ${t.border}` }}>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: t.text, marginBottom: "8px" }}>Which account received the payment?</div>
+                  <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: t.text, cursor: "pointer" }}>
+                      <input type="radio" name="soPayOnlineWhere" value="company" checked={onlineWhere === "company"} onChange={() => { setOnlineWhere("company"); setReceivedByUserId(null); }} />
+                      Company account
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: t.text, cursor: "pointer" }}>
+                      <input type="radio" name="soPayOnlineWhere" value="admin" checked={onlineWhere === "admin"} onChange={() => setOnlineWhere("admin")} />
+                      Admin's personal account
+                    </label>
+                  </div>
+                  {onlineWhere === "admin" && (
+                    <div style={{ marginTop: "10px" }}>
+                      <label style={{ ...s.label, display: "block", marginBottom: "4px" }}>Admin account *</label>
+                      <select style={{ ...s.input, width: "240px", marginBottom: 0 }}
+                        value={receivedByUserId || ""} onChange={e => setReceivedByUserId(e.target.value ? parseInt(e.target.value) : null)}>
+                        <option value="">— Select admin —</option>
+                        {adminUsers.map(u => <option key={u.id} value={u.id}>{u.username} ({u.role?.name || u.role})</option>)}
+                      </select>
+                      <div style={{ fontSize: "11px", color: "#f59e0b", marginTop: "4px" }}>Admin will need to verify this payment.</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* CHEQUE */}
+              {isCheque && (
+                <div style={{ marginTop: "14px", padding: "12px", background: "#fef3c744", borderRadius: "8px", border: "1px solid #f59e0b44" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: t.text, marginBottom: "8px" }}>Cheque Deposit Date *</div>
+                  <input style={{ ...s.input, width: "180px", marginBottom: 0 }} type="date" value={form.chequeDepositDate}
+                    onChange={e => setForm(f => ({ ...f, chequeDepositDate: e.target.value }))} />
+                  <div style={{ fontSize: "11px", color: "#92400e", marginTop: "4px" }}>Accounts will be reminded on this date.</div>
+                </div>
+              )}
+
+              <div style={{ marginTop: "12px" }}>
+                <label style={s.label}>Notes</label>
+                <input style={{ ...s.input, width: "100%", maxWidth: "360px" }} placeholder="Optional..."
+                  value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+              </div>
+
+              <div style={{ marginTop: "12px" }}>
                 <button style={ps.btnSuccess} onClick={handlePay} disabled={loading}>{loading ? "Saving..." : "Record Payment"}</button>
               </div>
             </div>
@@ -699,18 +907,131 @@ function PaySOPage({ order, onBack, onDone }) {
   );
 }
 
+// ── View Invoice Page (read-only) ─────────────────────────────────────────────
+function ViewInvoicePage({ order, inv, onBack }) {
+  const ps = usePageStyles();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const s = { label: ps.label, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td, totalRow: ps.totalRow };
+
+  const [items, setItems] = useState([]);
+  const [invoice, setInvoice] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    import("../services/invoiceService").then(({ getInvoiceById, getInvoiceItems }) => {
+      Promise.all([getInvoiceById(inv.invoiceId), getInvoiceItems(inv.invoiceId)])
+        .then(([fullInv, its]) => { setInvoice(fullInv); setItems(its); })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    });
+  }, [inv.invoiceId]);
+
+  const subTotal = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (i.quantity || 0), 0);
+  const totalTax = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (i.quantity || 0) * ((i.product?.gst || 0) / 100), 0);
+  const grandTotal = invoice?.totalAmount ?? (subTotal + totalTax);
+
+  const PSTATUS_COLOR = { PAID: "#16a34a", PARTIAL: "#f59e0b", UNPAID: "#ef4444" };
+
+  return (
+    <div>
+      <PageHeader title={`Invoice — ${inv.invoiceNumber}`}
+        subtitle={`SO: ${order.orderNumber} · Customer: ${order.customer?.name}`}
+        onBack={onBack} t={t} />
+
+      {loading ? (
+        <div style={ps.alertInfo}>Loading invoice...</div>
+      ) : (
+        <>
+          {/* Header info */}
+          <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" }}>
+              {[
+                { label: "Invoice No", value: inv.invoiceNumber },
+                { label: "Invoice Date", value: invoice?.invoiceDate || "—" },
+                { label: "Customer", value: order.customer?.name },
+                { label: "Payment Status", value: inv.paymentStatus, color: PSTATUS_COLOR[inv.paymentStatus] },
+              ].map(card => (
+                <div key={card.label} style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px" }}>
+                  <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.5px" }}>{card.label}</div>
+                  <div style={{ fontSize: "14px", fontWeight: 700, color: card.color || t.text }}>{card.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Items table */}
+          <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+            <div style={{ fontWeight: 700, fontSize: "13px", color: t.text, marginBottom: "12px" }}>Items</div>
+            <table style={s.table}>
+              <thead><tr style={s.thead}>
+                <th style={s.th}>Product</th>
+                <th style={s.th}>HSN</th>
+                <th style={s.th}>GST %</th>
+                <th style={s.th}>Price (Rs.)</th>
+                <th style={s.th}>Qty</th>
+                <th style={s.th}>Tax (Rs.)</th>
+                <th style={s.th}>Total (Rs.)</th>
+              </tr></thead>
+              <tbody>
+                {items.length === 0 && <tr><td colSpan={7} style={{ ...s.td, textAlign: "center", color: t.textMuted }}>No items</td></tr>}
+                {items.map(item => {
+                  const price = parseFloat(item.price) || 0;
+                  const qty = item.quantity || 0;
+                  const gst = item.product?.gst || 0;
+                  const tax = price * qty * gst / 100;
+                  return (
+                    <tr key={item.id} style={s.tr}>
+                      <td style={{ ...s.td, fontWeight: 600 }}>{item.product?.name}{item.product?.size ? ` - ${item.product.size}` : ""}</td>
+                      <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{item.product?.hsnCode || "—"}</td>
+                      <td style={s.td}>{gst}%</td>
+                      <td style={s.td}>Rs.{price.toFixed(2)}</td>
+                      <td style={s.td}>{qty}</td>
+                      <td style={s.td}>Rs.{tax.toFixed(2)}</td>
+                      <td style={{ ...s.td, fontWeight: 600 }}>Rs.{(price * qty + tax).toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+              <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px 20px", minWidth: "260px" }}>
+                <div style={s.totalRow}><span>Sub Total</span><span>Rs.{subTotal.toFixed(2)}</span></div>
+                <div style={s.totalRow}><span>Total GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
+                <div style={{ ...s.totalRow, fontWeight: 700, fontSize: "16px", borderTop: `1px solid ${t.border}`, paddingTop: "8px", marginTop: "4px" }}>
+                  <span>Grand Total</span><span>Rs.{parseFloat(grandTotal).toFixed(2)}</span>
+                </div>
+                {inv.paidAmount > 0 && (
+                  <>
+                    <div style={{ ...s.totalRow, color: "#16a34a" }}><span>Paid</span><span>Rs.{parseFloat(inv.paidAmount).toFixed(2)}</span></div>
+                    <div style={{ ...s.totalRow, fontWeight: 700, color: inv.dueAmount > 0 ? "#ef4444" : "#16a34a" }}>
+                      <span>Balance</span><span>Rs.{parseFloat(inv.dueAmount || 0).toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main SalesOrdersPage ──────────────────────────────────────────────────────
 export default function SalesOrdersPage() {
   const ps = usePageStyles();
   const { dark } = useTheme();
   const t = getTheme(dark);
 
-  const [view, setView] = useState("list"); // "list"|"new"|"edit"|"pay"
+  const [view, setView] = useState("list"); // "list"|"new"|"edit"|"pay"|"invoice"|"delivery"
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [invoiceSummaries, setInvoiceSummaries] = useState([]);
+  const [deliveryMap, setDeliveryMap] = useState({}); // soId → delivery status
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -721,9 +1042,18 @@ export default function SalesOrdersPage() {
     setLoading(true);
     try {
       const { getInvoiceSummaries } = await import("../services/invoiceService");
-      const [o, c, p, inv] = await Promise.all([getSalesOrders(), getCustomers(), getProducts(), getInvoiceSummaries()]);
+      const [o, c, p, inv, deliveries] = await Promise.all([
+        getSalesOrders(), getCustomers(), getProducts(), getInvoiceSummaries(),
+        getDeliveries().catch(() => [])
+      ]);
       setOrders([...o].sort((a, b) => b.id - a.id));
       setCustomers(c); setProducts(p); setInvoiceSummaries(inv); setError("");
+      // Build soId → delivery map
+      const dm = {};
+      (Array.isArray(deliveries) ? deliveries : []).forEach(d => {
+        if (d.salesOrder?.id) dm[d.salesOrder.id] = d;
+      });
+      setDeliveryMap(dm);
     } catch { setError("Failed to load data"); }
     finally { setLoading(false); }
   };
@@ -751,6 +1081,14 @@ export default function SalesOrdersPage() {
   if (view === "new") return <MainLayout><NewSOPage customers={customers} products={products} onBack={goBack} onCreated={goBack} /></MainLayout>;
   if (view === "edit" && selectedOrder) return <MainLayout><EditSOPage order={selectedOrder} products={products} onBack={goBack} onSaved={loadAll} /></MainLayout>;
   if (view === "pay" && selectedOrder) return <MainLayout><PaySOPage order={selectedOrder} onBack={goBack} onDone={loadAll} /></MainLayout>;
+  if (view === "invoice" && selectedOrder) {
+    const inv = getInvForSO(selectedOrder.id);
+    return <MainLayout><ViewInvoicePage order={selectedOrder} inv={inv} onBack={goBack} /></MainLayout>;
+  }
+  if (view === "delivery" && selectedOrder) {
+    const inv = getInvForSO(selectedOrder.id);
+    return <DeliveryAssignmentPage salesOrder={selectedOrder} invoice={inv} onBack={goBack} onSaved={goBack} />;
+  }
 
   // ── Column helpers ──────────────────────────────────────────────────────────
   const canEdit = (o) => o.status === "DRAFT" || o.status === "PENDING";
@@ -792,7 +1130,7 @@ export default function SalesOrdersPage() {
         <div style={{ ...ps.tableWrap, overflowX: "auto" }}>
           <table style={{ ...ps.table, tableLayout: "fixed", width: "100%" }}>
             <colgroup>
-              <col style={{ width: "90px" }} /><col style={{ width: "110px" }} /><col style={{ width: "140px" }} /><col style={{ width: "100px" }} /><col style={{ width: "90px" }} /><col style={{ width: "90px" }} /><col style={{ width: "110px" }} /><col style={{ width: "130px" }} /><col style={{ width: "120px" }} /><col style={{ width: "90px" }} /><col style={{ width: "130px" }} />
+              <col style={{ width: "90px" }} /><col style={{ width: "110px" }} /><col style={{ width: "140px" }} /><col style={{ width: "100px" }} /><col style={{ width: "90px" }} /><col style={{ width: "90px" }} /><col style={{ width: "110px" }} /><col style={{ width: "130px" }} /><col style={{ width: "120px" }} /><col style={{ width: "90px" }} /><col style={{ width: "100px" }} /><col style={{ width: "50px" }} />
             </colgroup>
             <thead>
               <tr style={ps.thead}>
@@ -806,12 +1144,13 @@ export default function SalesOrdersPage() {
                 <th style={th}>Invoice</th>
                 <th style={th}>Goods Status</th>
                 <th style={th}>Payment</th>
-                <th style={th}>Actions</th>
+                <th style={th}>Created By</th>
+                <th style={th}></th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && !loading && (
-                <tr><td colSpan={11} style={{ ...td, textAlign: "center", color: t.textMuted, padding: "40px" }}>No sales orders found</td></tr>
+                <tr><td colSpan={12} style={{ ...td, textAlign: "center", color: t.textMuted, padding: "40px" }}>No sales orders found</td></tr>
               )}
               {filtered.map(o => {
                 const inv = getInvForSO(o.id);
@@ -824,8 +1163,17 @@ export default function SalesOrdersPage() {
                 const isDeletable = canDelete(o);
 
                 return (
-                  <tr key={o.id} style={{ ...ps.tr, background: t.surface, cursor: isEditable ? "pointer" : "default" }}
-                    onClick={() => { if (isEditable) { setSelectedOrder(o); setView("edit"); } }}>
+                  <tr key={o.id} style={{ ...ps.tr, background: t.surface, cursor: "pointer" }}
+                    onClick={() => {
+                      setSelectedOrder(o);
+                      const inv = getInvForSO(o.id);
+                      if (inv) {
+                        setView("invoice");
+                      } else if (o.status === "DRAFT" || o.status === "PENDING" || o.status === "CONFIRMED") {
+                        setView("edit");
+                      }
+                      // CANCELLED — no action on click
+                    }}>
 
                     {/* Date */}
                     <td style={{ ...td, color: t.textSub }}>{o.orderDate || "—"}</td>
@@ -852,7 +1200,7 @@ export default function SalesOrdersPage() {
 
                     {/* Status */}
                     <td style={td} onClick={e => e.stopPropagation()}>
-                      {o.status === "DRAFT" || o.status === "PENDING" || o.status === "CONFIRMED" ? (
+                      {(o.status === "DRAFT" || o.status === "PENDING" || o.status === "CONFIRMED") ? (
                         <select style={{ padding: "3px 6px", borderRadius: "6px", border: `1px solid ${t.border}`, background: t.inputBg, color: t.text, fontSize: "11px", cursor: "pointer", width: "100%" }}
                           value={o.status}
                           onChange={e => handleStatusChange(o, e.target.value)}>
@@ -886,16 +1234,32 @@ export default function SalesOrdersPage() {
                     <td style={td} onClick={e => e.stopPropagation()}>
                       {o.status === "CANCELLED" ? (
                         <span style={{ color: "#9ca3af", fontSize: "11px" }}>—</span>
-                      ) : canMarkSent(o) ? (
-                        <button style={{ padding: "3px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, border: "none", cursor: "pointer", background: "#7c3aed22", color: "#7c3aed" }}
-                          onClick={() => handleStatusChange(o, "SHIPPED")}>
-                          Mark Sent
-                        </button>
-                      ) : o.status === "SHIPPED" ? (
-                        <span style={{ padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, background: "#7c3aed22", color: "#7c3aed" }}>Goods Sent</span>
-                      ) : (
-                        <span style={{ color: t.textMuted, fontSize: "11px" }}>—</span>
-                      )}
+                      ) : (() => {
+                        const delivery = deliveryMap[o.id];
+                        const ds = delivery?.status;
+                        if (ds === "CANCELLED") return (
+                          <button style={{ padding: "3px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, border: "none", cursor: "pointer", background: "#ef444422", color: "#ef4444" }}
+                            onClick={() => { setSelectedOrder(o); setView("delivery"); }}>Re-assign Vehicle</button>
+                        );
+                        if (ds === "DRAFT") return (
+                          <button style={{ padding: "3px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, border: "none", cursor: "pointer", background: "#f59e0b22", color: "#f59e0b" }}
+                            onClick={() => { setSelectedOrder(o); setView("delivery"); }}>Edit Draft</button>
+                        );
+                        if (ds === "CONFIRMED") return (
+                          <span style={{ padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, background: "#2563eb22", color: "#2563eb" }}>Out for Delivery</span>
+                        );
+                        if (ds === "DELIVERED" || ds === "RETURNED") return (
+                          <span style={{ padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, background: "#16a34a22", color: "#16a34a" }}>Goods Sent ✓</span>
+                        );
+                        if (canMarkSent(o)) return (
+                          <button style={{ padding: "3px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, border: "none", cursor: "pointer", background: "#2563eb22", color: "#2563eb" }}
+                            onClick={() => { setSelectedOrder(o); setView("delivery"); }}>Assign Delivery</button>
+                        );
+                        if (o.status === "SHIPPED") return (
+                          <span style={{ padding: "2px 7px", borderRadius: "10px", fontSize: "10px", fontWeight: 600, background: "#16a34a22", color: "#16a34a" }}>Goods Sent ✓</span>
+                        );
+                        return <span style={{ color: t.textMuted, fontSize: "11px" }}>—</span>;
+                      })()}
                     </td>
 
                     {/* Payment */}
@@ -912,12 +1276,17 @@ export default function SalesOrdersPage() {
                       )}
                     </td>
 
-                    {/* Actions */}
-                    <td style={td} onClick={e => e.stopPropagation()}>
+                    {/* Created By */}
+                    <td style={{ ...td, color: t.textSub, fontSize: "11px" }}>{o.createdByStaff?.name || o.createdBy || "—"}</td>
+
+                    {/* Delete */}
+                    <td style={{ ...td, textAlign: "center" }} onClick={e => e.stopPropagation()}>
                       {isDeletable && (
-                        <button style={{ ...ps.btnSmDanger, fontSize: "11px", padding: "3px 8px" }}
+                        <button
+                          title="Delete order"
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", fontSize: "15px", padding: "2px 4px", borderRadius: "4px", lineHeight: 1 }}
                           onClick={() => handleDelete(o)}>
-                          Delete
+                          🗑
                         </button>
                       )}
                     </td>

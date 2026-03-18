@@ -1,51 +1,69 @@
 ﻿import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
+import { useAuth } from "../context/AuthContext";
 import { getTheme } from "../theme";
 
 const sections = [
   {
     title: "Overview",
-    links: [{ to: "/dashboard", label: "Dashboard", icon: "▦" }],
+    links: [{ to: "/dashboard", label: "Dashboard", icon: "▦", page: "dashboard" }],
   },
   {
     title: "Catalogue",
     links: [
-      { to: "/prices",    label: "Price List", icon: "🏷" },
-      { to: "/inventory", label: "Inventory",  icon: "📦" },
+      { to: "/prices",    label: "Price List", icon: "🏷",  page: "prices" },
+      { to: "/inventory", label: "Inventory",  icon: "📦",  page: "inventory" },
     ],
   },
   {
     title: "Procurement",
     links: [
-      { to: "/suppliers", label: "Suppliers",       icon: "🏭" },
-      { to: "/purchase",  label: "Purchase Orders", icon: "🛒" },
-      { to: "/grn",       label: "Goods Receipt",   icon: "📥" },
+      { to: "/suppliers", label: "Suppliers",       icon: "🏭", page: "suppliers" },
+      { to: "/purchase",  label: "Purchase Orders", icon: "🛒", page: "purchase" },
+      { to: "/grn",       label: "Goods Receipt",   icon: "📥", page: "grn" },
     ],
   },
   {
     title: "Sales",
     links: [
-      { to: "/customers",    label: "Customers",    icon: "👥" },
-      { to: "/sales-orders", label: "Sales Orders", icon: "📋" },
-      { to: "/invoices",     label: "Invoices",     icon: "🧾" },
+      { to: "/customers",    label: "Customers",    icon: "👥", page: "customers" },
+      { to: "/sales-orders", label: "Sales Orders", icon: "📋", page: "sales-orders" },
+      { to: "/invoices",     label: "Invoices",     icon: "🧾", page: "invoices" },
+      { to: "/sales-returns", label: "Sales Returns", icon: "↩", page: "sales-returns" },
+      { to: "/vehicles",        label: "Vehicles",         icon: "🚛", page: "vehicles" },
+      { to: "/deliveries",      label: "Deliveries",       icon: "📦", page: "deliveries" },
+      { to: "/driver-dashboard",label: "My Deliveries",    icon: "🧑‍✈️", page: "driver-dashboard" },
     ],
   },
   {
     title: "Finance",
     links: [
-      { to: "/payments",      label: "Payments",      icon: "💳" },
-      { to: "/credit-notes",  label: "Credit Notes",  icon: "📝" },
-      { to: "/sales-returns", label: "Sales Returns", icon: "↩" },
-      { to: "/reports",       label: "Reports",       icon: "📊" },
+      { to: "/payments",   label: "Payments",       icon: "💳", page: "payments" },
+      { to: "/wallet",     label: "Staff Wallets",   icon: "👛", page: "wallet" },
+      { to: "/reports",    label: "Reports",         icon: "📊", page: "reports" },
+      { to: "/follow-ups", label: "Follow-Up Tracker", icon: "📞", page: "follow-ups" },
+    ],
+  },
+  {
+    title: "Admin",
+    links: [
+      { to: "/team",    label: "Team",    icon: "🧑‍💼", page: "team" },
+      { to: "/payroll", label: "Payroll", icon: "💰",   page: "payroll" },
     ],
   },
 ];
+
+const ROLE_COLORS = {
+  OWNER: "#f97316", ADMIN: "#ef4444", MANAGER: "#8b5cf6", SALES: "#2563eb",
+  ACCOUNTS: "#16a34a", WAREHOUSE: "#f59e0b", DRIVER: "#6b7280",
+};
 
 export default function Sidebar() {
   const location = useLocation();
   const { dark } = useTheme();
   const t = getTheme(dark);
+  const { user, logout, hasAccess } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -88,39 +106,67 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav style={{ flex: 1, padding: "8px 0", overflowY: "auto", overflowX: "hidden" }}>
-        {sections.map(section => (
-          <div key={section.title} style={{ marginBottom: "4px" }}>
-            {!collapsed && (
-              <div style={{ padding: "8px 16px 4px", fontSize: "9px", fontWeight: 700, letterSpacing: "1.2px", textTransform: "uppercase", color: t.sidebarSection }}>
-                {section.title}
-              </div>
-            )}
-            {collapsed && <div style={{ height: "8px" }} />}
-            {section.links.map(link => {
-              const active = location.pathname === link.to;
-              return (
-                <Link key={link.to} to={link.to} title={collapsed ? link.label : undefined} style={{
-                  display: "flex", alignItems: "center", gap: collapsed ? 0 : "9px",
-                  justifyContent: collapsed ? "center" : "flex-start",
-                  padding: collapsed ? "9px 0" : "8px 14px 8px 16px",
-                  marginBottom: "1px", textDecoration: "none", fontSize: "13px",
-                  fontWeight: active ? 600 : 400,
-                  background: active ? t.sidebarActive : "transparent",
-                  color: active ? t.sidebarActiveText : t.sidebarText,
-                  borderLeft: active ? "3px solid #3b9ede" : "3px solid transparent",
-                  borderRadius: "0 6px 6px 0", marginRight: collapsed ? 0 : "8px",
-                }}>
-                  <span style={{ fontSize: "15px", width: "18px", textAlign: "center", flexShrink: 0 }}>{link.icon}</span>
-                  {!collapsed && <span>{link.label}</span>}
-                </Link>
-              );
-            })}
-          </div>
-        ))}
+        {sections.map(section => {
+          const visibleLinks = section.links.filter(link => hasAccess(link.page));
+          if (visibleLinks.length === 0) return null;
+          return (
+            <div key={section.title} style={{ marginBottom: "4px" }}>
+              {!collapsed && (
+                <div style={{ padding: "8px 16px 4px", fontSize: "9px", fontWeight: 700, letterSpacing: "1.2px", textTransform: "uppercase", color: t.sidebarSection }}>
+                  {section.title}
+                </div>
+              )}
+              {collapsed && <div style={{ height: "8px" }} />}
+              {visibleLinks.map(link => {
+                const active = location.pathname === link.to;
+                return (
+                  <Link key={link.to} to={link.to} title={collapsed ? link.label : undefined} style={{
+                    display: "flex", alignItems: "center", gap: collapsed ? 0 : "9px",
+                    justifyContent: collapsed ? "center" : "flex-start",
+                    padding: collapsed ? "9px 0" : "8px 14px 8px 16px",
+                    marginBottom: "1px", textDecoration: "none", fontSize: "13px",
+                    fontWeight: active ? 600 : 400,
+                    background: active ? t.sidebarActive : "transparent",
+                    color: active ? t.sidebarActiveText : t.sidebarText,
+                    borderLeft: active ? "3px solid #3b9ede" : "3px solid transparent",
+                    borderRadius: "0 6px 6px 0", marginRight: collapsed ? 0 : "8px",
+                  }}>
+                    <span style={{ fontSize: "15px", width: "18px", textAlign: "center", flexShrink: 0 }}>{link.icon}</span>
+                    {!collapsed && <span>{link.label}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          );
+        })}
       </nav>
 
+      {/* User info + logout */}
+      {user && !collapsed && (
+        <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+            <div style={{ overflow: "hidden" }}>
+              <div style={{ color: t.sidebarBrand, fontSize: "12px", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {user.username}
+              </div>
+              <div style={{ fontSize: "10px", fontWeight: 700, color: ROLE_COLORS[user.role] || "#6b7280", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                {user.role}
+              </div>
+            </div>
+            <button onClick={logout} title="Logout" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.sidebarText, fontSize: "14px", padding: "4px", borderRadius: "4px", flexShrink: 0 }}>
+              ⏻
+            </button>
+          </div>
+        </div>
+      )}
+      {user && collapsed && (
+        <div style={{ padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "center" }}>
+          <button onClick={logout} title="Logout" style={{ background: "transparent", border: "none", cursor: "pointer", color: t.sidebarText, fontSize: "14px", padding: "4px", borderRadius: "4px" }}>⏻</button>
+        </div>
+      )}
+
       {!collapsed && (
-        <div style={{ padding: "10px 16px", borderTop: "1px solid rgba(255,255,255,0.06)", fontSize: "10px", color: t.sidebarText, textAlign: "center" }}>
+        <div style={{ padding: "6px 16px 10px", fontSize: "10px", color: t.sidebarText, textAlign: "center" }}>
           v1.0 · Sri Laxmi Agencies
         </div>
       )}

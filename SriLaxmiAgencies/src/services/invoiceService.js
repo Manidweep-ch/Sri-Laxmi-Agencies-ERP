@@ -40,3 +40,6 @@ export const getInvoiceItems = async (invoiceId) => {
   const res = await api.get(`/invoice-items/invoice/${invoiceId}`);
   return res.data;
 };
+
+export const createInvoiceItem = async (item) => (await api.post("/invoice-items", item)).data;
+};

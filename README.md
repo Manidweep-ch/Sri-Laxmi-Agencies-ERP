@@ -1,109 +1,72 @@
 # Sri Laxmi Agencies — ERP System
 
-A full-stack ERP application built for **Sri Laxmi Agencies**, a pipes and sanitary distribution business.
-
----
-
-## Tech Stack
-
-### Backend
-- Java 17
-- Spring Boot 4.x
-- Spring Security + JWT Authentication
-- Spring Data JPA + Hibernate
-- MySQL
-- Lombok
-- Maven
-
-### Frontend
-- React 19
-- Vite 8
-- React Router DOM 7
-- Axios
-- Pure CSS (no UI library) — custom industrial theme
+A full-stack ERP system for pipes and sanitary distribution businesses. Built with Spring Boot (backend) and React + Vite (frontend).
 
 ---
 
 ## Project Structure
 
 ```
-srilaxmi-erp/
-├── src/                        # Spring Boot backend
-│   └── main/java/com/srilaxmi/erp/
-│       ├── config/             # CORS, Security, Exception Handler
-│       ├── controller/         # REST API controllers
-│       ├── dto/                # Data Transfer Objects
-│       ├── entity/             # JPA entities
-│       ├── repository/         # Spring Data repositories
-│       └── service/            # Business logic
-├── SriLaxmiAgencies/           # React frontend
-│   └── src/
-│       ├── api/                # Axios config
-│       ├── components/         # Sidebar, Navbar
-│       ├── context/            # Theme context
-│       ├── hooks/              # usePageStyles
-│       ├── layout/             # MainLayout
-│       ├── pages/              # All page components
-│       ├── routes/             # App routes
-│       ├── services/           # API service functions
-│       └── theme.js            # Dark/light theme tokens
-├── pom.xml
-└── README.md
+/                          ← Spring Boot backend (Java 17, Maven)
+SriLaxmiAgencies/          ← React frontend (Vite)
 ```
 
 ---
 
-## Modules
+## Tech Stack
 
-| Module | Description |
-|---|---|
-| Auth | JWT login, role-based access |
-| Dashboard | Business overview, financial snapshot |
-| Products | Catalogue with brand, category, GST |
-| Price List | Base price, cost price, discount per product |
-| Customers | Customer master data |
-| Suppliers | Supplier master data |
-| Purchase Orders | PO creation, status flow, GRN, supplier payments |
-| Goods Receipt (GRN) | Stock receiving against PO |
-| Sales Orders | SO creation, discount, status flow, invoice generation |
-| Invoices | Auto-generated from sales orders |
-| Payments | Customer payment tracking |
-| Supplier Payments | Supplier payment tracking |
-| Credit Notes | Credit adjustments |
-| Sales Returns | Return management with refunds |
-| Inventory | Stock batch tracking, low stock alerts |
-| Reports | Financial, sales, purchase, inventory charts |
+| Layer     | Technology                          |
+|-----------|-------------------------------------|
+| Backend   | Java 17, Spring Boot 4, Spring Security, JWT, JPA/Hibernate |
+| Database  | MySQL 8+                            |
+| Frontend  | React 19, Vite 8, React Router 7, Axios |
+
+---
+
+## Features
+
+- **Inventory** — Stock batches, FIFO consumption, low-stock alerts
+- **Purchase Orders** — Smart ordering by brand/category, GRN, supplier payments
+- **Sales Orders** — Full order lifecycle, invoice generation, payments
+- **Invoicing** — Auto-generated invoices, GST calculation, payment tracking
+- **Delivery Management** — Vehicle fleet, driver assignment, delivery status tracking
+- **Sales Returns** — Return processing with refunds
+- **Follow-Up Tracker** — Customer follow-up notes and reminders
+- **Team Management** — Staff, roles, salary tracking
+- **Payroll** — Monthly payroll runs
+- **Reports & Dashboard** — Financial summaries, outstanding balances
+- **Role-Based Access** — OWNER, ADMIN, MANAGER, SALES, ACCOUNTS, WAREHOUSE, DRIVER
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
+
 - Java 17+
-- Node.js 18+
-- MySQL 8+
 - Maven 3.8+
+- MySQL 8+
+- Node.js 18+
 
 ### Backend Setup
 
-1. Create a MySQL database:
-```sql
-CREATE DATABASE srilaxmi_erp;
-```
+1. Create the MySQL database:
+   ```sql
+   CREATE DATABASE srilaxmi_erp;
+   ```
 
-2. Configure `src/main/resources/application.properties`:
-```properties
-spring.datasource.url=jdbc:mysql://localhost:3306/srilaxmi_erp
-spring.datasource.username=your_username
-spring.datasource.password=your_password
-spring.jpa.hibernate.ddl-auto=update
-```
+2. Copy the environment config:
+   ```bash
+   cp src/main/resources/application.properties.example src/main/resources/application.properties
+   ```
 
-3. Run the backend:
-```bash
-./mvnw spring-boot:run
-```
-Backend runs on `http://localhost:8081`
+3. Edit `application.properties` with your DB credentials.
+
+4. Run the backend:
+   ```bash
+   ./mvnw spring-boot:run
+   ```
+   The API will start on `http://localhost:8081`
 
 ### Frontend Setup
 
@@ -112,15 +75,26 @@ cd SriLaxmiAgencies
 npm install
 npm run dev
 ```
-Frontend runs on `http://localhost:5173`
+The app will start on `http://localhost:5173`
 
 ---
 
-## Environment
+## Default Login
 
-- Backend API base URL: `http://localhost:8081/api`
-- JWT token stored in `localStorage`
-- Dark / Light mode toggle available in navbar
+On first run, a default Owner account is created automatically:
+
+| Username | Password  |
+|----------|-----------|
+| `owner`  | `owner123` |
+
+> Change the password immediately after first login.
+
+---
+
+## Environment Variables
+
+See [`application.properties.example`](src/main/resources/application.properties.example) for backend config.
+See [`SriLaxmiAgencies/.env.example`](SriLaxmiAgencies/.env.example) for frontend config.
 
 ---
 

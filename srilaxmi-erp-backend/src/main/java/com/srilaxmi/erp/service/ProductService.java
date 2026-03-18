@@ -6,13 +6,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.srilaxmi.erp.entity.Product;
+import com.srilaxmi.erp.entity.Supplier;
 import com.srilaxmi.erp.repository.ProductRepository;
+import com.srilaxmi.erp.repository.SupplierRepository;
 
 @Service
 public class ProductService {
 
     @Autowired
     private ProductRepository productRepository;
+    @Autowired
+    private SupplierRepository supplierRepository;
 
     public Product saveProduct(Product product) {
         if (product == null) throw new IllegalArgumentException("Product cannot be null");
@@ -37,6 +41,17 @@ public class ProductService {
         existing.setGst(updated.getGst());
         existing.setBrand(updated.getBrand());
         existing.setCategory(updated.getCategory());
+
+        // Reorder fields
+        existing.setReorderLevel(updated.getReorderLevel());
+        existing.setReorderQty(updated.getReorderQty());
+        if (updated.getPreferredSupplier() != null && updated.getPreferredSupplier().getId() != null) {
+            supplierRepository.findById(updated.getPreferredSupplier().getId())
+                .ifPresent(existing::setPreferredSupplier);
+        } else {
+            existing.setPreferredSupplier(null);
+        }
+
         return productRepository.save(existing);
     }
 

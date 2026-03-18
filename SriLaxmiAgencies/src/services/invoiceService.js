@@ -42,4 +42,4 @@ export const getInvoiceItems = async (invoiceId) => {
 };
 
 export const createInvoiceItem = async (item) => (await api.post("/invoice-items", item)).data;
-};
+

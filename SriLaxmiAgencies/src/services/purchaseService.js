@@ -1,0 +1,23 @@
+import api from "../api/axiosConfig";
+
+export const getPurchaseOrders = async () => (await api.get("/purchase-orders")).data;
+export const createPurchaseOrder = async (po) => (await api.post("/purchase-orders", po)).data;
+export const deletePurchaseOrder = async (id) => (await api.delete(`/purchase-orders/${id}`)).data;
+export const getPurchaseOrderById = async (id) => (await api.get(`/purchase-orders/${id}`)).data;
+export const getPurchaseOrderItems = async (id) => (await api.get(`/purchase-orders/${id}/items`)).data;
+export const addPurchaseOrderItem = async (id, item) => (await api.post(`/purchase-orders/${id}/items`, item)).data;
+export const updatePurchaseOrderItem = async (id, itemId, item) => (await api.put(`/purchase-orders/${id}/items/${itemId}`, item)).data;
+export const removePurchaseOrderItem = async (id, itemId) => (await api.delete(`/purchase-orders/${id}/items/${itemId}`)).data;
+export const updatePurchaseOrderStatus = async (id, status) =>
+  (await api.put(`/purchase-orders/${id}/status`, status, { headers: { "Content-Type": "application/json" } })).data;
+export const receiveStockForPO = async (id, grn) => (await api.post(`/purchase-orders/${id}/receive`, grn)).data;
+export const getGRNsForPO = async (id) => (await api.get(`/purchase-orders/${id}/grns`)).data;
+export const getSupplierPayments = async (poId) => (await api.get(`/purchase-orders/${poId}/payments`)).data;
+export const recordSupplierPayment = async (payment) => (await api.post(`/purchase-orders/${payment.purchaseOrderId}/payments`, payment)).data;
+export const getSupplierTotalPaid = async (poId) => (await api.get(`/purchase-orders/${poId}/payments/total-paid`)).data;
+export const getPaymentSummary = async (poId) => (await api.get(`/purchase-orders/${poId}/payment-summary`)).data;
+
+// Smart ordering
+export const reorderFromPO = async (id) => (await api.post(`/purchase-orders/${id}/reorder`)).data;
+export const getProductsByBrand = async (brandId) => (await api.get(`/purchase-orders/products-by-brand/${brandId}`)).data;
+export const getProductsByCategory = async (categoryId) => (await api.get(`/purchase-orders/products-by-category/${categoryId}`)).data;

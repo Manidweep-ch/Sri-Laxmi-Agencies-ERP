@@ -1,0 +1,15 @@
+spring.application.name=srilaxmi-erp-backend
+server.port=8081
+
+# ── Database ──────────────────────────────────────────────────────────────────
+spring.datasource.url=jdbc:mysql://localhost:3306/srilaxmi_erp
+spring.datasource.username=root
+spring.datasource.password=YOUR_DB_PASSWORD_HERE
+
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=false
+
+# ── JWT ───────────────────────────────────────────────────────────────────────
+# Replace with a strong random secret (min 32 chars) in production
+jwt.secret=CHANGE_THIS_TO_A_STRONG_SECRET_KEY_MIN_32_CHARS
+jwt.expiration=86400000

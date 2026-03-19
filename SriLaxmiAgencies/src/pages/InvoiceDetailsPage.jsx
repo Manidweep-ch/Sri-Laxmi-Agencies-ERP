@@ -144,6 +144,7 @@ function InvoiceDetailsPage() {
                 <th style={{padding: '10px', textAlign: 'left', border: '1px solid #ddd'}}>Product</th>
                 <th style={{padding: '10px', textAlign: 'center', border: '1px solid #ddd'}}>Qty</th>
                 <th style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>Unit Price</th>
+                <th style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>Disc %</th>
                 <th style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>Total</th>
               </tr>
             </thead>
@@ -153,13 +154,14 @@ function InvoiceDetailsPage() {
                   <td style={{padding: '10px', border: '1px solid #ddd'}}>{item.product?.name}</td>
                   <td style={{padding: '10px', textAlign: 'center', border: '1px solid #ddd'}}>{item.quantity}</td>
                   <td style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>₹{item.unitPrice}</td>
+                  <td style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>{item.discount || 0}%</td>
                   <td style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>₹{item.totalPrice}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan="3" style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd', fontWeight: 'bold'}}>
+                <td colSpan="4" style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd', fontWeight: 'bold'}}>
                   Subtotal:
                 </td>
                 <td style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd', fontWeight: 'bold'}}>
@@ -167,7 +169,7 @@ function InvoiceDetailsPage() {
                 </td>
               </tr>
               <tr>
-                <td colSpan="3" style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>
+                <td colSpan="4" style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>
                   GST (18%):
                 </td>
                 <td style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd'}}>
@@ -175,7 +177,7 @@ function InvoiceDetailsPage() {
                 </td>
               </tr>
               <tr style={{backgroundColor: '#f8f9fa'}}>
-                <td colSpan="3" style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd', fontWeight: 'bold', fontSize: '18px'}}>
+                <td colSpan="4" style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd', fontWeight: 'bold', fontSize: '18px'}}>
                   Total Amount:
                 </td>
                 <td style={{padding: '10px', textAlign: 'right', border: '1px solid #ddd', fontWeight: 'bold', fontSize: '18px'}}>

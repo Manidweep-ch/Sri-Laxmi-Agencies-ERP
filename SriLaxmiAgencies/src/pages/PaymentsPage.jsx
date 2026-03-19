@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import MainLayout from "../layout/MainLayout";
 import {
   getPaymentsByInvoice, createPayment, getOutstanding, getAllPayments,
@@ -6,6 +6,7 @@ import {
   getAllSupplierPayments, getAllSalaryPayments
 } from "../services/paymentService";
 import { getInvoiceSummaries } from "../services/invoiceService";
+import { getWalletData } from "../services/dashboardService";
 import { getPurchaseOrders, getSupplierPayments, recordSupplierPayment, getSupplierTotalPaid } from "../services/purchaseService";
 import { getSalesReturns, getRefundsByReturn, getTotalRefunded, recordRefund } from "../services/salesReturnService";
 import { getStaff } from "../services/staffService";
@@ -1041,6 +1042,7 @@ function PaymentsDashboard({ ps }) {
   const { t } = ps;
   const [allPayments, setAllPayments] = useState([]);
   const [overdueCheques, setOverdueCheques] = useState([]);
+  const [walletData, setWalletData] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -1048,8 +1050,10 @@ function PaymentsDashboard({ ps }) {
     Promise.all([
       getAllPayments().catch(() => []),
       getPendingCheques().catch(() => []),
-    ]).then(([pays, cheques]) => {
+      getWalletData().catch(() => null),
+    ]).then(([pays, cheques, wallet]) => {
       setAllPayments(pays);
+      setWalletData(wallet);
       setOverdueCheques(cheques.filter(c => {
         const d = c.chequeDepositDate;
         const ds = Array.isArray(d) ? `${d[0]}-${String(d[1]).padStart(2,"0")}-${String(d[2]).padStart(2,"0")}` : d;
@@ -1073,6 +1077,7 @@ function PaymentsDashboard({ ps }) {
     .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
   const adminHeld = allPayments.filter(p => p.destination === "ADMIN_WALLET" && p.verificationStatus === "VERIFIED")
     .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const companyWalletBalance = parseFloat(walletData?.walletBalance ?? 0);
 
   return (
     <div style={{ marginBottom: "24px" }}>
@@ -1105,6 +1110,7 @@ function PaymentsDashboard({ ps }) {
       {/* Summary cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
         {[
+          { label: "Company Wallet Balance", value: companyWalletBalance, color: companyWalletBalance >= 0 ? "#16a34a" : "#ef4444" },
           { label: "Total Collected", value: total, color: "#2563eb" },
           { label: "Confirmed / Cleared", value: confirmed, color: "#16a34a" },
           { label: "Pending Verification", value: pending, color: "#f59e0b" },

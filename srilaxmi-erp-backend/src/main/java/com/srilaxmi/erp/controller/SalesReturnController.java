@@ -22,6 +22,12 @@ public class SalesReturnController {
     
     @GetMapping
     public List<SalesReturn> getAllReturns(){
-        return salesReturnService.getAllReturns();
+        List<SalesReturn> returns = salesReturnService.getAllReturns();
+        returns.forEach(r -> {
+            if (r.getInvoice() != null && r.getInvoice().getCustomer() != null) {
+                r.setCustomerName(r.getInvoice().getCustomer().getName());
+            }
+        });
+        return returns;
     }
 }

@@ -6,4 +6,8 @@ import java.util.List;
 
 public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
     List<Invoice> findByCustomerIdAndActiveTrue(Long customerId);
+
+    java.util.Optional<Invoice> findBySalesOrderIdAndActiveTrue(Long salesOrderId);
+
+    List<Invoice> findByActiveTrue();
 }

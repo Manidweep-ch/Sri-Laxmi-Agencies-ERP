@@ -829,7 +829,7 @@ function PayPage({ po, onBack, onDone }) {
     if (summary && amt > summary.balanceDue) { setError(`Amount exceeds balance due (Rs.${summary.balanceDue?.toFixed(2)})`); return; }
     try {
       setLoading(true); setError("");
-      await recordSupplierPayment(po.id, { amount: amt, paymentMethod: method, notes: note });
+      await recordSupplierPayment({ purchaseOrderId: po.id, amount: amt, paymentMethod: method, paymentDate: new Date().toISOString().split("T")[0], notes: note });
       setAmount(""); setNote("");
       await loadSummary();
       onDone();

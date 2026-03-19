@@ -21,3 +21,5 @@ export const getOverdueCheques = async () => (await api.get("/payments/cheques/o
 // Accounts history — all payments across the system
 export const getAllSupplierPayments = async () => (await api.get("/supplier-payments")).data;
 export const getAllSalaryPayments = async () => (await api.get("/salary-payments")).data;
+export const getAllWalletTransfers = async () => (await api.get("/wallet-transfers")).data;
+export const getWalletHistory = async () => (await api.get("/wallet-history")).data;

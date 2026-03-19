@@ -39,7 +39,7 @@ public class InvoiceService {
     }
 
     public List<Invoice> getInvoices(){
-        return invoiceRepository.findAll();
+        return invoiceRepository.findByActiveTrue();
     }
     
     public Optional<Invoice> getInvoiceById(Long id){

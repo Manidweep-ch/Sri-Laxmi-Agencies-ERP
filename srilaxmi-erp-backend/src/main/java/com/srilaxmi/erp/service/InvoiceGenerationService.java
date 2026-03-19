@@ -46,6 +46,11 @@ public class InvoiceGenerationService {
             throw new IllegalStateException("Invoice can only be generated for CONFIRMED orders. Current status: " + order.getStatus());
         }
 
+        // Guard against duplicate invoice generation
+        if (invoiceRepository.findBySalesOrderIdAndActiveTrue(salesOrderId).isPresent()) {
+            throw new IllegalStateException("An invoice has already been generated for this sales order.");
+        }
+
         Invoice invoice = new Invoice();
 
         invoice.setCustomer(order.getCustomer());

@@ -18,6 +18,7 @@ import com.srilaxmi.erp.repository.SalesReturnRefundRepository;
 
 import com.srilaxmi.erp.repository.SalaryPaymentRepository;
 import com.srilaxmi.erp.repository.CashDepositRepository;
+import com.srilaxmi.erp.repository.UserRepository;
 
 @RestController
 @RequestMapping("/api/dashboard")
@@ -61,6 +62,9 @@ public class DashboardController {
 
     @Autowired
     private CashDepositRepository cashDepositRepository;
+
+    @Autowired
+    private UserRepository userRepository;
 
     @GetMapping
     public Map<String, Object> getDashboardData() {
@@ -156,12 +160,27 @@ public class DashboardController {
         // Company wallet inflow = all transfers from staff/admin wallets to company
         BigDecimal companyInflow = cashDepositRepository.sumAll();
 
+        // Direct payments to company (cash at shop, online to company account) — also part of inflow
+        BigDecimal companyDirectPayments = paymentRepository.sumCompanyDirect();
+
         // Money still held by staff = payments assigned to staff - already transferred to company
         BigDecimal totalStaffHolding = assignedToStaff.subtract(companyInflow);
         if (totalStaffHolding.compareTo(BigDecimal.ZERO) < 0) totalStaffHolding = BigDecimal.ZERO;
 
-        // Company wallet balance = inflow - outflows
-        BigDecimal walletBalance = companyInflow
+        // Money still held by admins = sum of (verified - transferred) per admin
+        BigDecimal totalAdminHolding = BigDecimal.ZERO;
+        for (com.srilaxmi.erp.entity.User user : userRepository.findAll()) {
+            BigDecimal adminVerified = paymentRepository.sumByReceivedByUserIdAndStatus(user.getId(), "VERIFIED");
+            BigDecimal adminTransferred = cashDepositRepository.sumByUserId(user.getId());
+            BigDecimal adminBalance = adminVerified.subtract(adminTransferred);
+            if (adminBalance.compareTo(BigDecimal.ZERO) > 0) {
+                totalAdminHolding = totalAdminHolding.add(adminBalance);
+            }
+        }
+
+        // Company wallet balance = (direct inflows + wallet transfers) - outflows
+        BigDecimal walletBalance = companyDirectPayments
+            .add(companyInflow)
             .subtract(totalPOPaid)
             .subtract(totalRefundsPaid)
             .subtract(totalSalaryPaid);
@@ -172,7 +191,9 @@ public class DashboardController {
         wallet.put("unassignedPayments", unassignedPayments);
         wallet.put("assignedToStaff", assignedToStaff);
         wallet.put("companyInflow", companyInflow);
+        wallet.put("companyDirectPayments", companyDirectPayments);
         wallet.put("totalStaffHolding", totalStaffHolding);
+        wallet.put("totalAdminHolding", totalAdminHolding);
         wallet.put("totalPaid", totalPOPaid);
         wallet.put("totalSalaryPaid", totalSalaryPaid);
         wallet.put("walletBalance", walletBalance);

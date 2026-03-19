@@ -79,6 +79,8 @@ public class PaymentService {
 
         // Determine destination and verification status
         if (isCheque) {
+            if (payment.getChequeDepositDate() == null)
+                throw new IllegalArgumentException("Cheque deposit date is required for cheque payments");
             payment.setDestination("COMPANY_DIRECT");
             payment.setVerificationStatus("PENDING"); // Accounts must confirm deposit
             payment.setPaymentChannel("ONLINE");

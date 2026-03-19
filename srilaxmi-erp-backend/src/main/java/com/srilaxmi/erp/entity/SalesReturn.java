@@ -26,6 +26,9 @@ public class SalesReturn {
     @JoinColumn(name = "invoice_id")
     private Invoice invoice;
 
+    @Transient
+    private String customerName;
+
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @OneToMany(mappedBy = "salesReturn", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<SalesReturnItem> items;
@@ -74,6 +77,14 @@ public class SalesReturn {
 
     public void setInvoice(Invoice invoice) {
         this.invoice = invoice;
+    }
+
+    public String getCustomerName() {
+        return customerName;
+    }
+
+    public void setCustomerName(String customerName) {
+        this.customerName = customerName;
     }
 
     public List<SalesReturnItem> getItems() {

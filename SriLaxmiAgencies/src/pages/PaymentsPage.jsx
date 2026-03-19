@@ -3,7 +3,7 @@ import MainLayout from "../layout/MainLayout";
 import {
   getPaymentsByInvoice, createPayment, getOutstanding, getAllPayments,
   verifyPayment, updateChequeStatus, getPendingVerifications, getPendingCheques,
-  getAllSupplierPayments, getAllSalaryPayments
+  getAllSupplierPayments, getAllSalaryPayments, getAllWalletTransfers, getWalletHistory
 } from "../services/paymentService";
 import { getInvoiceSummaries } from "../services/invoiceService";
 import { getWalletData } from "../services/dashboardService";
@@ -498,7 +498,7 @@ function RefundsTab({ ps }) {
     try {
       const [refs, total] = await Promise.all([getRefundsByReturn(ret.id), getTotalRefunded(ret.id)]);
       setRefunds(refs); setTotalRefunded(total);
-      const outstanding = Math.max(0, parseFloat(ret.refundAmount || 0) - parseFloat(total || 0));
+      const outstanding = Math.max(0, parseFloat(ret.totalAmount || 0) - parseFloat(total || 0));
       setForm(f => ({ ...f, amount: outstanding > 0 ? String(outstanding.toFixed(2)) : "" }));
     } catch { setError("Failed to load return details"); }
   };
@@ -509,7 +509,7 @@ function RefundsTab({ ps }) {
     if (!amt || amt <= 0) { setError("Enter a valid amount"); return; }
     try {
       setSaving(true); setError(""); setSuccess("");
-      await recordRefund({ salesReturnId: selReturn.id, amount: amt, refundMethod: form.refundMethod, refundDate: form.refundDate, notes: form.notes });
+      await recordRefund(selReturn.id, { amount: amt, paymentMethod: form.refundMethod, refundDate: form.refundDate, notes: form.notes });
       setSuccess("Refund recorded");
       await selectReturn(selReturn);
       setForm(f => ({ ...f, notes: "" }));
@@ -517,7 +517,7 @@ function RefundsTab({ ps }) {
     finally { setSaving(false); }
   };
 
-  const outstanding = selReturn ? Math.max(0, parseFloat(selReturn.refundAmount || 0) - parseFloat(totalRefunded || 0)) : 0;
+  const outstanding = selReturn ? Math.max(0, parseFloat(selReturn.totalAmount || 0) - parseFloat(totalRefunded || 0)) : 0;
 
   return (
     <div>
@@ -531,7 +531,7 @@ function RefundsTab({ ps }) {
           <option value="">— Select return —</option>
           {returns.map(r => (
             <option key={r.id} value={r.id}>
-              {r.returnNumber || `RET-${r.id}`} — {r.customerName || r.customer?.name} — {fmt2(r.refundAmount)}
+              {r.returnNumber || `RET-${r.id}`} — {r.customerName || r.customer?.name} — {fmt2(r.totalAmount)}
             </option>
           ))}
         </select>
@@ -541,7 +541,7 @@ function RefundsTab({ ps }) {
         <>
           <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
             {[
-              { label: "Return Amount", value: selReturn.refundAmount, color: "#2563eb" },
+              { label: "Return Amount", value: selReturn.totalAmount, color: "#2563eb" },
               { label: "Refunded", value: totalRefunded, color: "#16a34a" },
               { label: "Pending Refund", value: outstanding, color: outstanding > 0 ? "#ef4444" : "#16a34a", big: true },
             ].map(c => (
@@ -599,7 +599,7 @@ function RefundsTab({ ps }) {
                     <tr key={i} style={ps.tr}>
                       <td style={ps.tdSub}>{fmtDate(r.refundDate)}</td>
                       <td style={{ ...ps.td, color: "#2563eb", fontWeight: 600 }}>{fmt2(r.amount)}</td>
-                      <td style={ps.tdSub}>{r.refundMethod?.replace("_"," ")}</td>
+                      <td style={ps.tdSub}>{r.paymentMethod?.replace("_"," ")}</td>
                       <td style={ps.tdSub}>{r.notes || "-"}</td>
                     </tr>
                   ))}
@@ -767,6 +767,7 @@ function HistoryTab({ ps }) {
   const [customerPayments, setCustomerPayments] = useState([]);
   const [supplierPayments, setSupplierPayments] = useState([]);
   const [salaryPayments, setSalaryPayments] = useState([]);
+  const [walletHistory, setWalletHistory] = useState([]);
   const [loading, setLoading] = useState(false);
 
   // Filters
@@ -782,10 +783,12 @@ function HistoryTab({ ps }) {
       getAllPayments().catch(() => []),
       getAllSupplierPayments().catch(() => []),
       getAllSalaryPayments().catch(() => []),
-    ]).then(([cp, sp, sal]) => {
+      getWalletHistory().catch(() => []),
+    ]).then(([cp, sp, sal, wh]) => {
       setCustomerPayments(Array.isArray(cp) ? cp : []);
       setSupplierPayments(Array.isArray(sp) ? sp : []);
       setSalaryPayments(Array.isArray(sal) ? sal : []);
+      setWalletHistory(Array.isArray(wh) ? wh : []);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -794,6 +797,7 @@ function HistoryTab({ ps }) {
     { key: "customers", label: "Customer Receipts" },
     { key: "suppliers", label: "Supplier Payments" },
     { key: "salary", label: "Staff Salaries" },
+    { key: "wallet", label: "Wallet History" },
   ];
 
   const resetFilters = () => { setSearch(""); setFilterMethod(""); setFilterStatus(""); setFilterFrom(""); setFilterTo(""); };
@@ -1033,6 +1037,120 @@ function HistoryTab({ ps }) {
           </div>
         </div>
       )}
+
+      {/* Wallet History */}
+      {subTab === "wallet" && (() => {
+        const CATEGORY_COLOR = {
+          "Customer Payment": "#16a34a",
+          "Staff Deposit":    "#2563eb",
+          "Admin Transfer":   "#8b5cf6",
+          "Supplier Payment": "#ef4444",
+          "Salary":           "#f59e0b",
+          "Refund":           "#ec4899",
+        };
+        const filtered = walletHistory.filter(w => {
+          const d = Array.isArray(w.date)
+            ? `${w.date[0]}-${String(w.date[1]).padStart(2,"0")}-${String(w.date[2]).padStart(2,"0")}`
+            : w.date || "";
+          if (filterFrom && d < filterFrom) return false;
+          if (filterTo && d > filterTo) return false;
+          if (search) {
+            const q = search.toLowerCase();
+            if (!(
+              (w.description || "").toLowerCase().includes(q) ||
+              (w.category || "").toLowerCase().includes(q) ||
+              (w.notes || "").toLowerCase().includes(q) ||
+              (w.method || "").toLowerCase().includes(q)
+            )) return false;
+          }
+          return true;
+        });
+        const totalIn  = filtered.filter(w => w.type === "IN").reduce((s, w) => s + parseFloat(w.amount || 0), 0);
+        const totalOut = filtered.filter(w => w.type === "OUT").reduce((s, w) => s + parseFloat(w.amount || 0), 0);
+        const net = totalIn - totalOut;
+        return (
+          <div>
+            <div style={{ display: "flex", gap: "12px", marginBottom: "16px", flexWrap: "wrap" }}>
+              {[
+                { label: "Total In", value: totalIn, color: "#16a34a" },
+                { label: "Total Out", value: totalOut, color: "#ef4444" },
+                { label: "Net Balance", value: net, color: net >= 0 ? "#16a34a" : "#ef4444" },
+                { label: "Transactions", value: filtered.length, color: "#2563eb", isCount: true },
+              ].map(c => (
+                <div key={c.label} style={{ background: t.surface, border: `1px solid ${c.color}44`, borderRadius: "8px", padding: "12px 16px", flex: 1, minWidth: "120px" }}>
+                  <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px" }}>{c.label}</div>
+                  <div style={{ fontSize: "17px", fontWeight: 700, color: c.color }}>
+                    {c.isCount ? c.value : fmt2(c.value)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", overflow: "hidden" }}>
+              <table style={ps.table}>
+                <thead><tr style={ps.thead}>
+                  <th style={ps.th}>Date</th>
+                  <th style={ps.th}>Type</th>
+                  <th style={ps.th}>Category</th>
+                  <th style={ps.th}>Description</th>
+                  <th style={ps.th}>Method</th>
+                  <th style={ps.th}>Amount</th>
+                  <th style={ps.th}>Balance</th>
+                  <th style={ps.th}>Notes</th>
+                </tr></thead>
+                <tbody>
+                  {filtered.length === 0 && (
+                    <tr><td colSpan={8} style={{ ...ps.td, textAlign: "center", color: "#9ca3af", padding: "32px" }}>No transactions found</td></tr>
+                  )}
+                  {filtered.map((w, i) => {
+                    const isIn = w.type === "IN";
+                    const color = CATEGORY_COLOR[w.category] || "#6b7280";
+                    const d = Array.isArray(w.date)
+                      ? `${w.date[0]}-${String(w.date[1]).padStart(2,"0")}-${String(w.date[2]).padStart(2,"0")}`
+                      : w.date || "-";
+                    return (
+                      <tr key={i} style={ps.tr}>
+                        <td style={ps.tdSub}>{d}</td>
+                        <td style={ps.td}>
+                          <span style={{ padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 700,
+                            background: isIn ? "#dcfce7" : "#fee2e2",
+                            color: isIn ? "#16a34a" : "#ef4444" }}>
+                            {isIn ? "▲ IN" : "▼ OUT"}
+                          </span>
+                        </td>
+                        <td style={ps.td}>
+                          <span style={{ padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: 600,
+                            background: color + "22", color }}>
+                            {w.category}
+                          </span>
+                        </td>
+                        <td style={{ ...ps.td, maxWidth: "200px", fontSize: "12px" }}>{w.description || "-"}</td>
+                        <td style={ps.tdSub}>{(w.method || "-").replace("_"," ")}</td>
+                        <td style={{ ...ps.td, fontWeight: 700, color: isIn ? "#16a34a" : "#ef4444" }}>
+                          {isIn ? "+" : "-"}{fmt2(w.amount)}
+                        </td>
+                        <td style={{ ...ps.td, fontWeight: 600, color: parseFloat(w.balance || 0) >= 0 ? "#16a34a" : "#ef4444", fontSize: "12px" }}>
+                          {fmt2(w.balance)}
+                        </td>
+                        <td style={ps.tdSub}>{w.notes || "-"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ padding: "10px 16px", borderTop: `1px solid ${t.border}`, fontSize: "12px", color: t.textSub, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+                <span>{filtered.length} transactions</span>
+                <span>
+                  <span style={{ color: "#16a34a", fontWeight: 700 }}>In: {fmt2(totalIn)}</span>
+                  <span style={{ margin: "0 12px", color: t.textSub }}>|</span>
+                  <span style={{ color: "#ef4444", fontWeight: 700 }}>Out: {fmt2(totalOut)}</span>
+                  <span style={{ margin: "0 12px", color: t.textSub }}>|</span>
+                  <span style={{ color: net >= 0 ? "#16a34a" : "#ef4444", fontWeight: 700 }}>Net: {fmt2(net)}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1075,8 +1193,7 @@ function PaymentsDashboard({ ps }) {
     .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
   const staffHeld = allPayments.filter(p => p.destination === "STAFF_WALLET")
     .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
-  const adminHeld = allPayments.filter(p => p.destination === "ADMIN_WALLET" && p.verificationStatus === "VERIFIED")
-    .reduce((s, p) => s + parseFloat(p.amount || 0), 0);
+  const adminHeld = parseFloat(walletData?.totalAdminHolding ?? 0);
   const companyWalletBalance = parseFloat(walletData?.walletBalance ?? 0);
 
   return (

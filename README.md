@@ -4,6 +4,25 @@ A full-stack ERP system for pipes and sanitary distribution businesses. Built wi
 
 ---
 
+## 🚀 Live Demo
+
+The application is deployed and accessible at:
+
+- **Frontend**: [https://sri-laxmi-agencies-erp.vercel.app](https://sri-laxmi-agencies-erp.vercel.app/reports)
+- **Backend API**: [https://sri-laxmi-agencies-erp-backend.onrender.com](https://sri-laxmi-agencies-erp-backend.onrender.com)
+
+### Demo Credentials
+
+Use the following credentials to access the live demo:
+
+| Username | Password  |
+|----------|-----------|
+| `admin`  | `admin123` |
+
+> These are automatically generated demo credentials. For production use, create your own accounts.
+
+---
+
 ## Project Structure
 
 ```
@@ -18,7 +37,7 @@ SriLaxmiAgencies/          ← React frontend (Vite)
 | Layer     | Technology                          |
 |-----------|-------------------------------------|
 | Backend   | Java 17, Spring Boot 4, Spring Security, JWT, JPA/Hibernate |
-| Database  | MySQL 8+                            |
+| Database  | MySQL 8+ (Hosted on Aiven Console)   |
 | Frontend  | React 19, Vite 8, React Router 7, Axios |
 
 ---
@@ -79,13 +98,13 @@ The app will start on `http://localhost:5173`
 
 ---
 
-## Default Login
+## Default Login (Local Development)
 
 On first run, a default Owner account is created automatically:
 
 | Username | Password  |
 |----------|-----------|
-| `owner`  | `owner123` |
+| `admin`  | `admin123` |
 
 > Change the password immediately after first login.
 

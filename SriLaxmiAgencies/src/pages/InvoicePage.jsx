@@ -15,9 +15,9 @@ export default function InvoicePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [expandedId, setExpandedId] = useState(null);
-  const [itemsCache, setItemsCache] = useState({});
-  const [itemsLoading, setItemsLoading] = useState(false);
+  const [view, setView] = useState("list"); // "list" | "detail"
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
+  
   const ps = usePageStyles();
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -35,18 +35,20 @@ export default function InvoicePage() {
 
   useEffect(() => { load(); }, []);
 
-  const handleExpand = async (inv) => {
-    if (expandedId === inv.id) { setExpandedId(null); return; }
-    setExpandedId(inv.id);
-    if (!itemsCache[inv.id]) {
-      setItemsLoading(true);
-      try {
-        const items = await getInvoiceItems(inv.id);
-        setItemsCache(c => ({ ...c, [inv.id]: items }));
-      } catch {}
-      finally { setItemsLoading(false); }
-    }
+  const handleViewDetail = (inv) => {
+    setSelectedInvoice(inv);
+    setView("detail");
   };
+
+  const goBack = () => {
+    setView("list");
+    setSelectedInvoice(null);
+    load();
+  };
+
+  if (view === "detail" && selectedInvoice) {
+    return <MainLayout><InvoiceDetailView inv={selectedInvoice} onBack={goBack} /></MainLayout>;
+  }
 
   const displayed = invoices.filter(i => {
     const q = search.toLowerCase();
@@ -64,7 +66,7 @@ export default function InvoicePage() {
           <div>
             <h2 style={ps.pageTitle}>Invoices</h2>
             <div style={{ fontSize: "12px", color: t.textMuted, marginTop: "2px" }}>
-              {displayed.length} invoices &middot; click a row to see line items
+              {displayed.length} invoices
             </div>
           </div>
           <input className="erp-input" style={ps.searchInput} placeholder="Search invoice #, customer..." value={search} onChange={e => setSearch(e.target.value)} />
@@ -92,11 +94,10 @@ export default function InvoicePage() {
         <div style={ps.tableWrap}>
           <table style={ps.table}>
             <colgroup>
-              <col style={{ width: "32px" }} /><col style={{ width: "150px" }} /><col style={{ width: "100px" }} /><col style={{ width: "100px" }} /><col style={{ width: "180px" }} /><col style={{ width: "120px" }} /><col style={{ width: "120px" }} /><col style={{ width: "120px" }} /><col style={{ width: "120px" }} />
+              <col style={{ width: "150px" }} /><col style={{ width: "100px" }} /><col style={{ width: "100px" }} /><col style={{ width: "180px" }} /><col style={{ width: "120px" }} /><col style={{ width: "120px" }} /><col style={{ width: "120px" }} /><col style={{ width: "120px" }} />
             </colgroup>
             <thead>
               <tr style={ps.thead}>
-                <th style={ps.th} />
                 <th style={ps.th}>Invoice #</th>
                 <th style={ps.th}>Date</th>
                 <th style={ps.th}>Due Date</th>
@@ -109,90 +110,32 @@ export default function InvoicePage() {
             </thead>
             <tbody>
               {displayed.length === 0 && !loading && (
-                <tr><td colSpan={9} style={{ ...ps.td, textAlign: "center", color: t.textMuted, padding: "40px" }}>No invoices found</td></tr>
+                <tr><td colSpan={8} style={{ ...ps.td, textAlign: "center", color: t.textMuted, padding: "40px" }}>No invoices found</td></tr>
               )}
-              {displayed.map(inv => {
-                const isOpen = expandedId === inv.id;
-                const items = itemsCache[inv.id] || [];
-                return [
-                  <tr key={inv.id} className="erp-tr"
-                    style={{ ...ps.tr, background: isOpen ? t.surfaceAlt : t.surface, cursor: "pointer" }}
-                    onClick={() => handleExpand(inv)}>
-                    <td style={{ ...ps.td, textAlign: "center", color: t.textMuted, fontSize: "11px" }}>
-                      {isOpen ? "▼" : "▶"}
-                    </td>
-                    <td style={{ ...ps.td, fontWeight: 700 }}>{inv.invoiceNumber}</td>
-                    <td style={ps.tdSub}>{inv.invoiceDate || "-"}</td>
-                    <td style={ps.tdSub}>{inv.dueDate || "-"}</td>
-                    <td style={ps.td}>{inv.customerName || "-"}</td>
-                    <td style={{ ...ps.td, fontWeight: 600 }}>
-                      Rs.{parseFloat(inv.totalAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ ...ps.td, color: "#16a34a" }}>
-                      Rs.{parseFloat(inv.paidAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ ...ps.td, color: parseFloat(inv.dueAmount || 0) > 0 ? "#ef4444" : "#16a34a", fontWeight: 600 }}>
-                      Rs.{parseFloat(inv.dueAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td style={ps.td}>
-                      <span style={{ padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, background: (PAY_COLORS[inv.paymentStatus] || "#6b7280") + "22", color: PAY_COLORS[inv.paymentStatus] || "#6b7280" }}>
-                        {inv.paymentStatus || "PENDING"}
-                      </span>
-                    </td>
-                  </tr>,
-                  isOpen && (
-                    <tr key={`${inv.id}-items`}>
-                      <td colSpan={9} style={{ padding: 0, background: t.surfaceAlt }}>
-                        <div style={{ padding: "12px 24px 16px 48px" }}>
-                          <div style={{ fontSize: "12px", fontWeight: 700, color: t.textMuted, marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                            Line Items
-                          </div>
-                          {itemsLoading && !itemsCache[inv.id] ? (
-                            <div style={{ color: t.textMuted, fontSize: "13px" }}>Loading items...</div>
-                          ) : items.length === 0 ? (
-                            <div style={{ color: t.textMuted, fontSize: "13px" }}>No items found</div>
-                          ) : (
-                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
-                              <thead>
-                                <tr style={{ background: t.tableHead }}>
-                                  {["Product", "Qty", "Unit Price", "Line Total", "Cost Price", "Margin"].map(h => (
-                                    <th key={h} style={{ ...ps.th, fontSize: "11px", padding: "6px 10px" }}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {items.map(item => {
-                                  const lineTotal = parseFloat(item.totalPrice || 0);
-                                  const cost = parseFloat(item.costPrice || 0) * (item.quantity || 1);
-                                  const margin = lineTotal - cost;
-                                  return (
-                                    <tr key={item.id} style={{ background: t.surface, borderBottom: `1px solid ${t.border}` }}>
-                                      <td style={{ ...ps.td, padding: "6px 10px" }}>{item.product?.name || "-"}</td>
-                                      <td style={{ ...ps.tdSub, padding: "6px 10px" }}>{item.quantity}</td>
-                                      <td style={{ ...ps.td, padding: "6px 10px" }}>
-                                        Rs.{parseFloat(item.unitPrice || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                                      </td>
-                                      <td style={{ ...ps.td, padding: "6px 10px", fontWeight: 600 }}>
-                                        Rs.{lineTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                                      </td>
-                                      <td style={{ ...ps.tdSub, padding: "6px 10px", color: "#7c3aed" }}>
-                                        {item.costPrice ? `Rs.${cost.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "-"}
-                                      </td>
-                                      <td style={{ ...ps.td, padding: "6px 10px", color: margin >= 0 ? "#16a34a" : "#ef4444", fontWeight: 600 }}>
-                                        {item.costPrice ? `Rs.${margin.toLocaleString("en-IN", { minimumFractionDigits: 2 })}` : "-"}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                ];
-              })}
+              {displayed.map(inv => (
+                <tr key={inv.id} className="erp-tr"
+                  style={{ ...ps.tr, background: t.surface, cursor: "pointer" }}
+                  onClick={() => handleViewDetail(inv)}>
+                  <td style={{ ...ps.td, fontWeight: 700 }}>{inv.invoiceNumber}</td>
+                  <td style={ps.tdSub}>{inv.invoiceDate || "-"}</td>
+                  <td style={ps.tdSub}>{inv.dueDate || "-"}</td>
+                  <td style={ps.td}>{inv.customerName || "-"}</td>
+                  <td style={{ ...ps.td, fontWeight: 600 }}>
+                    Rs.{parseFloat(inv.totalAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </td>
+                  <td style={{ ...ps.td, color: "#16a34a" }}>
+                    Rs.{parseFloat(inv.paidAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </td>
+                  <td style={{ ...ps.td, color: parseFloat(inv.dueAmount || 0) > 0 ? "#ef4444" : "#16a34a", fontWeight: 600 }}>
+                    Rs.{parseFloat(inv.dueAmount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </td>
+                  <td style={ps.td}>
+                    <span style={{ padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 600, background: (PAY_COLORS[inv.paymentStatus] || "#6b7280") + "22", color: PAY_COLORS[inv.paymentStatus] || "#6b7280" }}>
+                      {inv.paymentStatus || "PENDING"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -200,3 +143,116 @@ export default function InvoicePage() {
     </MainLayout>
   );
 }
+
+// ── Invoice Detail View (Full Page) ──────────────────────────────────────────
+function InvoiceDetailView({ inv, onBack }) {
+  const ps = usePageStyles();
+  const { dark } = useTheme();
+  const t = getTheme(dark);
+  const s = { label: ps.label, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td, totalRow: ps.totalRow };
+
+  const [items, setItems] = useState([]);
+  const [invoice, setInvoice] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([getInvoiceById(inv.id), getInvoiceItems(inv.id)])
+      .then(([fullInv, its]) => { setInvoice(fullInv); setItems(its); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [inv.id]);
+
+  const subTotal = items.reduce((acc, i) => acc + (parseFloat(i.unitPrice) || 0) * (i.quantity || 0), 0);
+  const totalTax = items.reduce((acc, i) => acc + (parseFloat(i.unitPrice) || 0) * (i.quantity || 0) * ((i.product?.gst || 0) / 100), 0);
+  const grandTotal = invoice?.totalAmount ?? (subTotal + totalTax);
+
+  const PSTATUS_COLOR = { PAID: "#16a34a", PARTIALLY_PAID: "#f59e0b", OVERDUE: "#ef4444", PENDING: "#6b7280" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
+        <button onClick={onBack} style={{ padding: "7px 14px", border: `1px solid ${t.border}`, borderRadius: "6px", background: t.surface, color: t.text, cursor: "pointer", fontSize: "13px" }}>
+          ← Back
+        </button>
+        <div>
+          <h2 style={{ margin: 0, fontSize: "18px", color: t.text }}>Invoice — {inv.invoiceNumber}</h2>
+          <div style={{ fontSize: "12px", color: t.textSub, marginTop: "2px" }}>Customer: {inv.customerName}</div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={ps.alertInfo}>Loading invoice...</div>
+      ) : (
+        <>
+          {/* Header info cards */}
+          <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" }}>
+              {[
+                { label: "Invoice No", value: inv.invoiceNumber },
+                { label: "Invoice Date", value: invoice?.invoiceDate || "—" },
+                { label: "Due Date", value: invoice?.dueDate || "—" },
+                { label: "Payment Status", value: inv.paymentStatus, color: PSTATUS_COLOR[inv.paymentStatus] },
+              ].map(card => (
+                <div key={card.label} style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px" }}>
+                  <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.5px" }}>{card.label}</div>
+                  <div style={{ fontSize: "14px", fontWeight: 700, color: card.color || t.text }}>{card.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Items table */}
+          <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
+            <div style={{ fontWeight: 700, fontSize: "13px", color: t.text, marginBottom: "12px" }}>Line Items</div>
+            <table style={s.table}>
+              <thead><tr style={s.thead}>
+                <th style={s.th}>Product</th>
+                <th style={s.th}>HSN</th>
+                <th style={s.th}>GST %</th>
+                <th style={s.th}>Price (Rs.)</th>
+                <th style={s.th}>Disc %</th>
+                <th style={s.th}>Qty</th>
+                <th style={s.th}>Tax (Rs.)</th>
+                <th style={s.th}>Total (Rs.)</th>
+              </tr></thead>
+              <tbody>
+                {items.length === 0 && <tr><td colSpan={8} style={{ ...s.td, textAlign: "center", color: t.textMuted }}>No items</td></tr>}
+                {items.map(item => {
+                  const price = parseFloat(item.unitPrice) || 0;
+                  const disc = parseFloat(item.discount) || 0;
+                  const qty = item.quantity || 0;
+                  const gst = item.product?.gst || 0;
+                  const tax = price * qty * gst / 100;
+                  return (
+                    <tr key={item.id} style={s.tr}>
+                      <td style={{ ...s.td, fontWeight: 600 }}>{item.product?.name}{item.product?.size ? ` - ${item.product.size}` : ""}</td>
+                      <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{item.product?.hsnCode || "—"}</td>
+                      <td style={s.td}>{gst}%</td>
+                      <td style={s.td}>Rs.{price.toFixed(2)}</td>
+                      <td style={s.td}>{disc}%</td>
+                      <td style={s.td}>{qty}</td>
+                      <td style={s.td}>Rs.{tax.toFixed(2)}</td>
+                      <td style={{ ...s.td, fontWeight: 600 }}>Rs.{(price * qty + tax).toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+              <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px 20px", minWidth: "260px" }}>
+                <div style={s.totalRow}><span>Sub Total</span><span>Rs.{subTotal.toFixed(2)}</span></div>
+                <div style={s.totalRow}><span>Total GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
+                <div style={{ ...s.totalRow, fontWeight: 700, fontSize: "16px", borderTop: `1px solid ${t.border}`, paddingTop: "8px", marginTop: "4px" }}>
+                  <span>Final Price</span><span>Rs.{parseFloat(grandTotal).toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+import { getInvoiceById } from "../services/invoiceService";

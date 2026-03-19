@@ -14,7 +14,8 @@ function InvoiceItemsPage() {
   const [form, setForm] = useState({
     productId: "",
     quantity: "",
-    unitPrice: ""
+    unitPrice: "",
+    discount: ""
   });
 
   const loadItems = async () => {
@@ -63,13 +64,17 @@ function InvoiceItemsPage() {
       setLoading(true);
       setError('');
       
-      const totalPrice = parseFloat(form.quantity) * parseFloat(form.unitPrice);
+      const qty = parseFloat(form.quantity);
+      const price = parseFloat(form.unitPrice);
+      const disc = parseFloat(form.discount || 0);
+      const totalPrice = qty * price * (1 - disc / 100);
       
       const payload = {
         invoice: { id: id },
         product: { id: form.productId },
         quantity: parseInt(form.quantity),
-        unitPrice: parseFloat(form.unitPrice),
+        unitPrice: price,
+        discount: disc,
         totalPrice: totalPrice
       };
 
@@ -78,7 +83,8 @@ function InvoiceItemsPage() {
       setForm({
         productId: "",
         quantity: "",
-        unitPrice: ""
+        unitPrice: "",
+        discount: ""
       });
 
       loadItems();
@@ -133,6 +139,16 @@ function InvoiceItemsPage() {
           style={{marginRight: '10px'}}
         />
 
+        <input
+          name="discount"
+          type="number"
+          step="0.1"
+          placeholder="Discount %"
+          value={form.discount}
+          onChange={handleChange}
+          style={{marginRight: '10px'}}
+        />
+
         <button onClick={handleSubmit} disabled={loading}>
           {loading ? 'Adding...' : 'Add Item'}
         </button>
@@ -146,6 +162,7 @@ function InvoiceItemsPage() {
               <th>Product</th>
               <th>Quantity</th>
               <th>Unit Price</th>
+              <th>Disc %</th>
               <th>Total Price</th>
             </tr>
           </thead>
@@ -156,12 +173,13 @@ function InvoiceItemsPage() {
                 <td>{item.product?.name}</td>
                 <td>{item.quantity}</td>
                 <td>₹{item.unitPrice}</td>
+                <td>{item.discount || 0}%</td>
                 <td>₹{item.totalPrice}</td>
               </tr>
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan="4" style={{textAlign: 'center', fontStyle: 'italic'}}>
+                <td colSpan="5" style={{textAlign: 'center', fontStyle: 'italic'}}>
                   No items added to this invoice yet
                 </td>
               </tr>
@@ -169,7 +187,7 @@ function InvoiceItemsPage() {
           </tbody>
           <tfoot>
             <tr style={{backgroundColor: '#f8f9fa', fontWeight: 'bold'}}>
-              <td colSpan="3" style={{textAlign: 'right'}}>Total:</td>
+              <td colSpan="4" style={{textAlign: 'right'}}>Total:</td>
               <td>
                 ₹{items.reduce((total, item) => total + item.totalPrice, 0).toFixed(2)}
               </td>

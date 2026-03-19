@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import MainLayout from "../layout/MainLayout";
 import { getAllWallets, getStaffWallet, getAdminWallet, recordStaffTransfer, recordAdminTransfer } from "../services/walletService";
+import { getWalletData } from "../services/dashboardService";
 import { verifyPayment } from "../services/paymentService";
 import { usePageStyles } from "../hooks/usePageStyles";
 import { useAuth } from "../context/AuthContext";
@@ -381,14 +382,22 @@ function WalletPage() {
   const ps = usePageStyles();
   const { t } = ps;
   const [wallets, setWallets] = useState([]);
+  const [companyWallet, setCompanyWallet] = useState(null);
   const [selected, setSelected] = useState(null); // { type: "STAFF"|"ADMIN", id }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const load = async () => {
-    try { setLoading(true); setWallets(await getAllWallets()); }
-    catch { setError("Failed to load wallets"); }
-    finally { setLoading(false); }
+    try {
+      setLoading(true);
+      const [allWallets, wallet] = await Promise.all([getAllWallets(), getWalletData().catch(() => null)]);
+      setWallets(allWallets);
+      setCompanyWallet(wallet);
+    } catch {
+      setError("Failed to load wallets");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -419,6 +428,7 @@ function WalletPage() {
       {/* Summary */}
       <div style={{ display: "flex", gap: "12px", marginBottom: "24px", flexWrap: "wrap" }}>
         {[
+          { label: "Company Wallet Balance", value: companyWallet?.walletBalance ?? 0, color: (companyWallet?.walletBalance ?? 0) >= 0 ? "#16a34a" : "#ef4444" },
           { label: "Total Collected", value: totalReceived, color: "#2563eb" },
           { label: "Transferred to Company", value: totalTransferred, color: "#16a34a" },
           { label: "Held by Staff", value: totalStaffHolding, color: totalStaffHolding > 0 ? "#ef4444" : "#16a34a" },

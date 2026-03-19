@@ -1,6 +1,7 @@
 package com.srilaxmi.erp.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -83,13 +84,28 @@ public class InvoiceGenerationService {
                 invItem.setProduct(item.getProduct());
                 invItem.setQuantity(split.quantity);
 
-                // Use SP from the batch; fall back to SO price if SP was not stamped (legacy batches)
-                BigDecimal unitPrice = split.sellingPrice > 0
-                        ? BigDecimal.valueOf(split.sellingPrice)
-                        : item.getPrice();
-                invItem.setUnitPrice(unitPrice);
+                BigDecimal unitPrice;
+                BigDecimal discount;
 
-                BigDecimal subTotal = unitPrice.multiply(new BigDecimal(split.quantity));
+                if (split.sellingPrice > 0) {
+                    // Use base price from batch and apply the SO discount
+                    unitPrice = BigDecimal.valueOf(split.sellingPrice);
+                    discount = item.getDiscount() != null ? item.getDiscount() : BigDecimal.ZERO;
+                } else {
+                    // Fallback: SO price is already discounted
+                    unitPrice = item.getPrice();
+                    discount = BigDecimal.ZERO;
+                }
+
+                invItem.setUnitPrice(unitPrice);
+                invItem.setDiscount(discount);
+
+                // subTotal = (unitPrice * quantity) * (1 - discount/100)
+                BigDecimal baseAmount = unitPrice.multiply(new BigDecimal(split.quantity));
+                BigDecimal discountMultiplier = BigDecimal.ONE.subtract(
+                        discount.divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP));
+                BigDecimal subTotal = baseAmount.multiply(discountMultiplier);
+                
                 BigDecimal gstAmount = subTotal.multiply(BigDecimal.valueOf(gstRate / 100.0));
                 BigDecimal itemTotal = subTotal.add(gstAmount);
                 invItem.setTotalPrice(itemTotal);

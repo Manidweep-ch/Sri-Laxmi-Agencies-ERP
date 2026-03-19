@@ -48,7 +48,7 @@ function SalesOrderDetailsPage() {
   };
 
   const calculateTotal = () => {
-    return items.reduce((total, item) => total + (item.quantity * item.expectedPrice), 0).toFixed(2);
+    return items.reduce((total, item) => total + (item.quantity * item.price), 0).toFixed(2);
   };
 
   if (loading) return <MainLayout><div>Loading...</div></MainLayout>;
@@ -119,6 +119,7 @@ function SalesOrderDetailsPage() {
               <th>Product</th>
               <th>Quantity</th>
               <th>Price</th>
+              <th>Disc %</th>
               <th>Line Total</th>
             </tr>
           </thead>
@@ -127,13 +128,14 @@ function SalesOrderDetailsPage() {
               <tr key={index}>
                 <td>{item.product?.name}</td>
                 <td>{item.quantity}</td>
-                <td>${item.expectedPrice}</td>
-                <td>${(item.quantity * item.expectedPrice).toFixed(2)}</td>
+                <td>${item.price}</td>
+                <td>{item.discount || 0}%</td>
+                <td>${(item.quantity * item.price).toFixed(2)}</td>
               </tr>
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan="4" style={{textAlign: 'center', fontStyle: 'italic'}}>
+                <td colSpan="5" style={{textAlign: 'center', fontStyle: 'italic'}}>
                   No items added to this sales order yet
                 </td>
               </tr>
@@ -141,7 +143,7 @@ function SalesOrderDetailsPage() {
           </tbody>
           <tfoot>
             <tr style={{backgroundColor: '#f8f9fa', fontWeight: 'bold'}}>
-              <td colSpan="3" style={{textAlign: 'right'}}>Total Amount:</td>
+              <td colSpan="4" style={{textAlign: 'right'}}>Total Amount:</td>
               <td>${calculateTotal()}</td>
             </tr>
           </tfoot>

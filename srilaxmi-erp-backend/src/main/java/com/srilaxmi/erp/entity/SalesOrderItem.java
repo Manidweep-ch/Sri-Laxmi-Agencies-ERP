@@ -23,6 +23,8 @@ public class SalesOrderItem {
 
     private BigDecimal price;
 
+    private BigDecimal discount;
+
     public SalesOrderItem() {}
 
     public Long getId() {
@@ -63,5 +65,13 @@ public class SalesOrderItem {
 
     public void setPrice(BigDecimal price) {
         this.price = price;
+    }
+
+    public BigDecimal getDiscount() {
+        return discount;
+    }
+
+    public void setDiscount(BigDecimal discount) {
+        this.discount = discount;
     }
 }

@@ -231,11 +231,11 @@ export default function Dashboard() {
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                 }}>
                   <div>
-                    <div style={{ fontSize: "10px", color: t.textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.8px" }}>Net Wallet Balance</div>
+                    <div style={{ fontSize: "10px", color: t.textMuted, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.8px" }}>Company Wallet Balance</div>
                     <div style={{ fontSize: "28px", fontWeight: 900, color: walletBalance >= 0 ? t.success : t.danger, lineHeight: 1.1, marginTop: "4px" }}>
                       {fmtFull(walletBalance)}
                     </div>
-                    <div style={{ fontSize: "11px", color: t.textMuted, marginTop: "4px" }}>Received − Paid − Refunds</div>
+                    <div style={{ fontSize: "11px", color: t.textMuted, marginTop: "4px" }}>Final balance after customer receipts and all payouts</div>
                   </div>
                   <Ring pct={Math.min(Math.abs(walletBalance) / Math.max(totalReceived, 1) * 100, 100)}
                     color={walletBalance >= 0 ? t.success : t.danger} size={64} stroke={7} />

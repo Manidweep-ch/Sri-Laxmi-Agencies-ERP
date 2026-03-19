@@ -173,12 +173,16 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
   }, []);
 
   // Compute totals using FIFO batch SPs when available, else fall back to price list
+  // lineDiscount (%) is applied on top of the batch/base SP
   const getLineSplits = (l) => {
+    const disc = parseFloat(l.discount) || 0;
     const batches = batchMap[l.productId];
     if (batches && batches.length > 0 && batches.some(b => b.sellingPrice > 0)) {
-      return computeFifoSplits(batches, parseInt(l.qty) || 0);
+      return computeFifoSplits(batches, parseInt(l.qty) || 0).map(sp => ({
+        ...sp, sellingPrice: sp.sellingPrice * (1 - disc / 100)
+      }));
     }
-    const net = (parseFloat(l.basePrice) || 0) * (1 - (parseFloat(l.discount) || 0) / 100);
+    const net = (parseFloat(l.basePrice) || 0) * (1 - disc / 100);
     return [{ qty: parseInt(l.qty) || 0, sellingPrice: net, purchasePrice: 0 }];
   };
 
@@ -200,11 +204,11 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
   const handleAddLine = async () => {
     if (!selectedProduct) { setError("Select a product first"); return; }
     if (lines.find(l => l.productId === selectedProduct.id)) { setError("Product already added"); return; }
-    let basePrice = 0, discount = 0;
+    let basePrice = 0, baseDiscount = 0;
     try {
       const pd = await getCurrentPrice(selectedProduct.id);
       basePrice = parseFloat(pd?.basePrice) || 0;
-      discount = parseFloat(pd?.baseDiscount) || 0;
+      baseDiscount = parseFloat(pd?.baseDiscount) || 0;
     } catch {}
     // Fetch batches for FIFO SP preview
     try {
@@ -214,7 +218,7 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
     setLines(prev => [...prev, {
       productId: selectedProduct.id, productName: selectedProduct.name,
       size: selectedProduct.size, gst: selectedProduct.gst || 0,
-      basePrice, discount, qty: 1
+      basePrice, discount: baseDiscount, qty: 1
     }]);
     setSelectedProduct(null); setProductSearch(""); setError("");
   };
@@ -245,7 +249,8 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
           return {
             product: { id: l.productId },
             quantity: parseInt(l.qty),
-            price: weightedSP
+            price: weightedSP,
+            discount: parseFloat(l.discount) || 0
           };
         })
       });
@@ -297,6 +302,7 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
             <thead><tr style={s.thead}>
               <th style={s.th}>Product</th><th style={s.th}>GST%</th>
               <th style={s.th}>Batch SP (Rs.)</th>
+              <th style={s.th}>Disc %</th>
               <th style={s.th}>Qty</th>
               <th style={s.th}>Line Total (Rs.)</th><th style={s.th}>Tax (Rs.)</th><th style={s.th}></th>
             </tr></thead>
@@ -316,6 +322,10 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
                         : `Rs.${splits[0]?.sellingPrice.toFixed(2) || "0.00"}`}
                     </td>
                     <td style={s.td}>
+                      <input style={{ ...s.input, width: "60px" }} type="number" min="0" max="100" step="0.1"
+                        value={line.discount} onChange={e => updateLine(idx, "discount", e.target.value)} />
+                    </td>
+                    <td style={s.td}>
                       <input style={{ ...s.input, width: "70px" }} type="number" min="1"
                         value={line.qty} onChange={e => updateLine(idx, "qty", e.target.value)} />
                     </td>
@@ -325,7 +335,7 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
                   </tr>,
                   isMultiBatch && (
                     <tr key={`${idx}-note`}>
-                      <td colSpan={7} style={{ ...s.td, fontSize: "11px", color: "#f59e0b", paddingTop: 0, paddingBottom: "6px", fontStyle: "italic" }}>
+                      <td colSpan={8} style={{ ...s.td, fontSize: "11px", color: "#f59e0b", paddingTop: 0, paddingBottom: "6px", fontStyle: "italic" }}>
                         FIFO split: {splits.map((sp, i) => `${sp.qty} units @ Rs.${sp.sellingPrice.toFixed(2)}`).join(" + ")}
                       </td>
                     </tr>
@@ -343,6 +353,7 @@ function NewSOPage({ customers, products, onBack, onCreated }) {
               </div>
 
               {/* Final price override */}
+              {/* (discount is applied per-item via the Disc% column in the table above) */}
               <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: `1px dashed ${t.border}` }}>
                 <label style={{ fontSize: "11px", color: t.textSub, display: "block", marginBottom: "6px" }}>
                   Final Price — customer agreed amount (optional)
@@ -440,11 +451,14 @@ function EditSOPage({ order, products, onBack, onSaved }) {
   }, [order.id]);
 
   const getLineSplits = (l) => {
+    const disc = parseFloat(l.discount) || 0;
     const batches = batchMap[l.productId];
     if (batches && batches.length > 0 && batches.some(b => b.sellingPrice > 0)) {
-      return computeFifoSplits(batches, parseInt(l.qty) || 0);
+      return computeFifoSplits(batches, parseInt(l.qty) || 0).map(sp => ({
+        ...sp, sellingPrice: sp.sellingPrice * (1 - disc / 100)
+      }));
     }
-    const net = (parseFloat(l.basePrice) || 0) * (1 - (parseFloat(l.discount) || 0) / 100);
+    const net = (parseFloat(l.basePrice) || 0) * (1 - disc / 100);
     return [{ qty: parseInt(l.qty) || 0, sellingPrice: net, purchasePrice: 0 }];
   };
 
@@ -466,17 +480,17 @@ function EditSOPage({ order, products, onBack, onSaved }) {
   const handleAddLine = async () => {
     if (!selectedProduct) { setError("Select a product first"); return; }
     if (lines.find(l => l.productId === selectedProduct.id)) { setError("Product already added"); return; }
-    let basePrice = 0, discount = 0;
+    let basePrice = 0, baseDiscount = 0;
     try {
       const pd = await getCurrentPrice(selectedProduct.id);
       basePrice = parseFloat(pd?.basePrice) || 0;
-      discount = parseFloat(pd?.baseDiscount) || 0;
+      baseDiscount = parseFloat(pd?.baseDiscount) || 0;
     } catch {}
     // Add to backend immediately
     try {
       setLoading(true);
-      const netPrice = basePrice * (1 - discount / 100);
-      await addSalesOrderItem(order.id, { product: { id: selectedProduct.id }, price: netPrice, quantity: 1 });
+      const netPrice = basePrice * (1 - baseDiscount / 100);
+      await addSalesOrderItem(order.id, { product: { id: selectedProduct.id }, price: netPrice, quantity: 1, discount: baseDiscount });
       // fetch batches for FIFO preview
       try {
         const batches = await getProductStock(selectedProduct.id);
@@ -490,7 +504,7 @@ function EditSOPage({ order, products, onBack, onSaved }) {
         productName: selectedProduct.name,
         size: selectedProduct.size || "",
         gst: selectedProduct.gst || 0,
-        basePrice, discount, qty: 1,
+        basePrice, discount: baseDiscount, qty: 1,
       }]);
       setSelectedProduct(null); setProductSearch(""); setError("");
       onSaved();
@@ -506,8 +520,9 @@ function EditSOPage({ order, products, onBack, onSaved }) {
     const line = updated[idx];
     if (!line.itemId) return;
     try {
-      const net = (parseFloat(line.basePrice) || 0) * (1 - (parseFloat(line.discount) || 0) / 100);
-      await addSalesOrderItem(order.id, { product: { id: line.productId }, price: net, quantity: parseInt(line.qty) || 1 });
+      const disc = parseFloat(line.discount) || 0;
+      const net = (parseFloat(line.basePrice) || 0) * (1 - disc / 100);
+      await addSalesOrderItem(order.id, { product: { id: line.productId }, price: net, quantity: parseInt(line.qty) || 1, discount: disc });
       onSaved();
     } catch {}
   };
@@ -571,6 +586,7 @@ function EditSOPage({ order, products, onBack, onSaved }) {
             <thead><tr style={s.thead}>
               <th style={s.th}>Product</th><th style={s.th}>GST%</th>
               <th style={s.th}>Batch SP (Rs.)</th>
+              <th style={s.th}>Disc %</th>
               <th style={s.th}>Qty</th>
               <th style={s.th}>Line Total (Rs.)</th><th style={s.th}>Tax (Rs.)</th><th style={s.th}></th>
             </tr></thead>
@@ -590,6 +606,10 @@ function EditSOPage({ order, products, onBack, onSaved }) {
                         : `Rs.${splits[0]?.sellingPrice.toFixed(2) || "0.00"}`}
                     </td>
                     <td style={s.td}>
+                      <input style={{ ...s.input, width: "60px" }} type="number" min="0" max="100" step="0.1"
+                        value={line.discount} onChange={e => updateLine(idx, "discount", e.target.value)} />
+                    </td>
+                    <td style={s.td}>
                       <input style={{ ...s.input, width: "70px" }} type="number" min="1"
                         value={line.qty} onChange={e => updateLine(idx, "qty", e.target.value)} />
                     </td>
@@ -599,7 +619,7 @@ function EditSOPage({ order, products, onBack, onSaved }) {
                   </tr>,
                   isMultiBatch && (
                     <tr key={`${idx}-note`}>
-                      <td colSpan={7} style={{ ...s.td, fontSize: "11px", color: "#f59e0b", paddingTop: 0, paddingBottom: "6px", fontStyle: "italic" }}>
+                      <td colSpan={8} style={{ ...s.td, fontSize: "11px", color: "#f59e0b", paddingTop: 0, paddingBottom: "6px", fontStyle: "italic" }}>
                         FIFO split: {splits.map((sp, i) => `${sp.qty} units @ Rs.${sp.sellingPrice.toFixed(2)}`).join(" + ")}
                       </td>
                     </tr>
@@ -920,15 +940,15 @@ function ViewInvoicePage({ order, inv, onBack }) {
 
   useEffect(() => {
     import("../services/invoiceService").then(({ getInvoiceById, getInvoiceItems }) => {
-      Promise.all([getInvoiceById(inv.invoiceId), getInvoiceItems(inv.invoiceId)])
+      Promise.all([getInvoiceById(inv.id), getInvoiceItems(inv.id)])
         .then(([fullInv, its]) => { setInvoice(fullInv); setItems(its); })
         .catch(() => {})
         .finally(() => setLoading(false));
     });
-  }, [inv.invoiceId]);
+  }, [inv.id]);
 
-  const subTotal = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (i.quantity || 0), 0);
-  const totalTax = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (i.quantity || 0) * ((i.product?.gst || 0) / 100), 0);
+  const subTotal = items.reduce((acc, i) => acc + (parseFloat(i.unitPrice) || 0) * (i.quantity || 0), 0);
+  const totalTax = items.reduce((acc, i) => acc + (parseFloat(i.unitPrice) || 0) * (i.quantity || 0) * ((i.product?.gst || 0) / 100), 0);
   const grandTotal = invoice?.totalAmount ?? (subTotal + totalTax);
 
   const PSTATUS_COLOR = { PAID: "#16a34a", PARTIAL: "#f59e0b", UNPAID: "#ef4444" };
@@ -969,14 +989,16 @@ function ViewInvoicePage({ order, inv, onBack }) {
                 <th style={s.th}>HSN</th>
                 <th style={s.th}>GST %</th>
                 <th style={s.th}>Price (Rs.)</th>
+                <th style={s.th}>Disc %</th>
                 <th style={s.th}>Qty</th>
                 <th style={s.th}>Tax (Rs.)</th>
                 <th style={s.th}>Total (Rs.)</th>
               </tr></thead>
               <tbody>
-                {items.length === 0 && <tr><td colSpan={7} style={{ ...s.td, textAlign: "center", color: t.textMuted }}>No items</td></tr>}
+                {items.length === 0 && <tr><td colSpan={9} style={{ ...s.td, textAlign: "center", color: t.textMuted }}>No items</td></tr>}
                 {items.map(item => {
-                  const price = parseFloat(item.price) || 0;
+                  const price = parseFloat(item.unitPrice) || 0;
+                  const disc = parseFloat(item.discount) || 0;
                   const qty = item.quantity || 0;
                   const gst = item.product?.gst || 0;
                   const tax = price * qty * gst / 100;
@@ -986,6 +1008,7 @@ function ViewInvoicePage({ order, inv, onBack }) {
                       <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{item.product?.hsnCode || "—"}</td>
                       <td style={s.td}>{gst}%</td>
                       <td style={s.td}>Rs.{price.toFixed(2)}</td>
+                      <td style={s.td}>{disc}%</td>
                       <td style={s.td}>{qty}</td>
                       <td style={s.td}>Rs.{tax.toFixed(2)}</td>
                       <td style={{ ...s.td, fontWeight: 600 }}>Rs.{(price * qty + tax).toFixed(2)}</td>
@@ -1000,16 +1023,8 @@ function ViewInvoicePage({ order, inv, onBack }) {
                 <div style={s.totalRow}><span>Sub Total</span><span>Rs.{subTotal.toFixed(2)}</span></div>
                 <div style={s.totalRow}><span>Total GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
                 <div style={{ ...s.totalRow, fontWeight: 700, fontSize: "16px", borderTop: `1px solid ${t.border}`, paddingTop: "8px", marginTop: "4px" }}>
-                  <span>Grand Total</span><span>Rs.{parseFloat(grandTotal).toFixed(2)}</span>
+                  <span>Final Price</span><span>Rs.{parseFloat(grandTotal).toFixed(2)}</span>
                 </div>
-                {inv.paidAmount > 0 && (
-                  <>
-                    <div style={{ ...s.totalRow, color: "#16a34a" }}><span>Paid</span><span>Rs.{parseFloat(inv.paidAmount).toFixed(2)}</span></div>
-                    <div style={{ ...s.totalRow, fontWeight: 700, color: inv.dueAmount > 0 ? "#ef4444" : "#16a34a" }}>
-                      <span>Balance</span><span>Rs.{parseFloat(inv.dueAmount || 0).toFixed(2)}</span>
-                    </div>
-                  </>
-                )}
               </div>
             </div>
           </div>
@@ -1068,7 +1083,16 @@ export default function SalesOrdersPage() {
   };
 
   const handleGenerateInvoice = async (order) => {
-    try { await generateInvoiceFromSalesOrder(order.id); loadAll(); }
+    try {
+      await generateInvoiceFromSalesOrder(order.id);
+      // Reload and show the invoice view immediately
+      const { getInvoiceSummaries } = await import("../services/invoiceService");
+      const invSummaries = await getInvoiceSummaries();
+      setInvoiceSummaries(invSummaries);
+      setSelectedOrder(order);
+      setView("invoice");
+      setError("");
+    }
     catch (e) { setError(e.response?.data?.message || "Failed to generate invoice"); }
   };
 

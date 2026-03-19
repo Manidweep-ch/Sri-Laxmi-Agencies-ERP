@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import MainLayout from "../layout/MainLayout";
 import { getDeliveriesByDriver, markDelivered, markVehicleReturned, markCancelled } from "../services/deliveryService";
-import { getInvoiceItems } from "../services/invoiceService";
+import { getInvoiceItems, getInvoiceById } from "../services/invoiceService";
 import { usePageStyles } from "../hooks/usePageStyles";
 import { useTheme } from "../context/ThemeContext";
 import { getTheme } from "../theme";
@@ -20,7 +20,10 @@ const STATUS_LABEL = {
 function InvoiceReadOnly({ delivery, onBack, ps, isDriver }) {
   const { dark } = useTheme();
   const t = getTheme(dark);
+  const s = { label: ps.label, table: ps.table, thead: ps.thead, th: ps.th, tr: ps.tr, td: ps.td, totalRow: ps.totalRow };
+
   const [items, setItems] = useState([]);
+  const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
@@ -29,11 +32,17 @@ function InvoiceReadOnly({ delivery, onBack, ps, isDriver }) {
 
   useEffect(() => {
     if (!inv?.id) { setLoading(false); return; }
-    getInvoiceItems(inv.id).then(setItems).catch(() => {}).finally(() => setLoading(false));
+    Promise.all([getInvoiceById(inv.id), getInvoiceItems(inv.id)])
+      .then(([fullInv, its]) => { setInvoice(fullInv); setItems(its); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [inv?.id]);
 
-  const subTotal = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (i.quantity || 0), 0);
-  const totalTax = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (i.quantity || 0) * ((i.product?.gst || 0) / 100), 0);
+  const subTotal = items.reduce((acc, i) => acc + (parseFloat(i.unitPrice) || 0) * (i.quantity || 0), 0);
+  const totalTax = items.reduce((acc, i) => acc + (parseFloat(i.unitPrice) || 0) * (i.quantity || 0) * ((i.product?.gst || 0) / 100), 0);
+  const grandTotal = invoice?.totalAmount ?? (subTotal + totalTax);
+
+  const PSTATUS_COLOR = { PAID: "#16a34a", PARTIALLY_PAID: "#f59e0b", OVERDUE: "#ef4444", PENDING: "#6b7280" };
 
   const handleDelivered = async () => {
     if (!window.confirm("Confirm goods were delivered to the customer?")) return;
@@ -59,9 +68,11 @@ function InvoiceReadOnly({ delivery, onBack, ps, isDriver }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
-        <button onClick={() => onBack(false)} style={{ padding: "7px 14px", border: `1px solid ${t.border}`, borderRadius: "6px", background: t.surface, color: t.text, cursor: "pointer", fontSize: "13px" }}>← Back</button>
+        <button onClick={() => onBack(false)} style={{ padding: "7px 14px", border: `1px solid ${t.border}`, borderRadius: "6px", background: t.surface, color: t.text, cursor: "pointer", fontSize: "13px" }}>
+          ← Back
+        </button>
         <div>
-          <h2 style={{ margin: 0, fontSize: "18px", color: t.text }}>{inv?.invoiceNumber || "Delivery"}</h2>
+          <h2 style={{ margin: 0, fontSize: "18px", color: t.text }}>Invoice — {inv?.invoiceNumber || "Delivery"}</h2>
           <div style={{ fontSize: "12px", color: t.textSub, marginTop: "2px" }}>
             {delivery.salesOrder?.orderNumber} · {delivery.salesOrder?.customer?.name}
           </div>
@@ -73,18 +84,20 @@ function InvoiceReadOnly({ delivery, onBack, ps, isDriver }) {
 
       {error && <div style={ps.alertError}>{error}</div>}
 
-      {/* Delivery info */}
+      {/* Header info cards */}
       <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" }}>
           {[
             { label: "Customer", value: delivery.salesOrder?.customer?.name },
             { label: "Vehicle", value: delivery.vehicle?.registrationNumber || delivery.porterVehicleNumber || "Porter" },
             { label: "Assigned Date", value: delivery.assignedDate || "—" },
+            { label: "Invoice Date", value: invoice?.invoiceDate || "—" },
+            { label: "Payment Status", value: invoice?.paymentStatus || "PENDING", color: PSTATUS_COLOR[invoice?.paymentStatus] || "#6b7280" },
             ...(!isDriver ? [{ label: "Transport Charge", value: delivery.transportCharge ? `Rs.${parseFloat(delivery.transportCharge).toFixed(2)}` : "—" }] : []),
-          ].map(c => (
-            <div key={c.label} style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "10px 12px" }}>
-              <div style={{ fontSize: "10px", color: t.textSub, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "4px" }}>{c.label}</div>
-              <div style={{ fontSize: "13px", fontWeight: 600, color: t.text }}>{c.value}</div>
+          ].map(card => (
+            <div key={card.label} style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px" }}>
+              <div style={{ fontSize: "11px", color: t.textSub, marginBottom: "4px", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.5px" }}>{card.label}</div>
+              <div style={{ fontSize: "14px", fontWeight: 700, color: card.color || t.text }}>{card.value}</div>
             </div>
           ))}
         </div>
@@ -96,42 +109,53 @@ function InvoiceReadOnly({ delivery, onBack, ps, isDriver }) {
         {delivery.notes && <div style={{ marginTop: "8px", fontSize: "12px", color: t.textSub }}>Notes: {delivery.notes}</div>}
       </div>
 
-      {/* Invoice items */}
+      {/* Items table */}
       {loading ? (
         <div style={ps.alertInfo}>Loading invoice...</div>
       ) : (
         <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "16px", marginBottom: "16px" }}>
-          <div style={{ fontWeight: 700, fontSize: "13px", color: t.text, marginBottom: "12px" }}>Invoice Items</div>
-          <table style={ps.table}>
-            <thead><tr style={ps.thead}>
-              <th style={ps.th}>Product</th>
-              <th style={ps.th}>Qty</th>
-              <th style={ps.th}>Price (Rs.)</th>
-              <th style={ps.th}>Total (Rs.)</th>
+          <div style={{ fontWeight: 700, fontSize: "13px", color: t.text, marginBottom: "12px" }}>Line Items</div>
+          <table style={s.table}>
+            <thead><tr style={s.thead}>
+              <th style={s.th}>Product</th>
+              <th style={s.th}>HSN</th>
+              <th style={s.th}>GST %</th>
+              <th style={s.th}>Price (Rs.)</th>
+              <th style={s.th}>Disc %</th>
+              <th style={s.th}>Qty</th>
+              <th style={s.th}>Tax (Rs.)</th>
+              <th style={s.th}>Total (Rs.)</th>
             </tr></thead>
             <tbody>
-              {items.length === 0 && <tr><td colSpan={4} style={{ ...ps.td, textAlign: "center", color: t.textMuted }}>No items</td></tr>}
+              {items.length === 0 && <tr><td colSpan={8} style={{ ...s.td, textAlign: "center", color: t.textMuted }}>No items</td></tr>}
               {items.map(item => {
-                const price = parseFloat(item.price) || 0;
+                const price = parseFloat(item.unitPrice) || 0;
+                const disc = parseFloat(item.discount) || 0;
                 const qty = item.quantity || 0;
                 const gst = item.product?.gst || 0;
+                const tax = price * qty * gst / 100;
                 return (
-                  <tr key={item.id} style={ps.tr}>
-                    <td style={{ ...ps.td, fontWeight: 600 }}>{item.product?.name}{item.product?.size ? ` - ${item.product.size}` : ""}</td>
-                    <td style={ps.td}>{qty}</td>
-                    <td style={ps.td}>Rs.{price.toFixed(2)}</td>
-                    <td style={{ ...ps.td, fontWeight: 600 }}>Rs.{(price * qty * (1 + gst / 100)).toFixed(2)}</td>
+                  <tr key={item.id} style={s.tr}>
+                    <td style={{ ...s.td, fontWeight: 600 }}>{item.product?.name}{item.product?.size ? ` - ${item.product.size}` : ""}</td>
+                    <td style={{ ...s.td, color: t.textSub, fontSize: "12px" }}>{item.product?.hsnCode || "—"}</td>
+                    <td style={s.td}>{gst}%</td>
+                    <td style={s.td}>Rs.{price.toFixed(2)}</td>
+                    <td style={s.td}>{disc}%</td>
+                    <td style={s.td}>{qty}</td>
+                    <td style={s.td}>Rs.{tax.toFixed(2)}</td>
+                    <td style={{ ...s.td, fontWeight: 600 }}>Rs.{(price * qty + tax).toFixed(2)}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "10px" }}>
-            <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "10px 16px", minWidth: "200px" }}>
-              <div style={ps.totalRow}><span>Sub Total</span><span>Rs.{subTotal.toFixed(2)}</span></div>
-              <div style={ps.totalRow}><span>GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
-              <div style={{ ...ps.totalRow, fontWeight: 700, borderTop: `1px solid ${t.border}`, paddingTop: "6px", marginTop: "4px" }}>
-                <span>Grand Total</span><span>Rs.{(subTotal + totalTax).toFixed(2)}</span>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "12px" }}>
+            <div style={{ background: t.surfaceAlt, border: `1px solid ${t.border}`, borderRadius: "8px", padding: "12px 20px", minWidth: "260px" }}>
+              <div style={s.totalRow}><span>Sub Total</span><span>Rs.{subTotal.toFixed(2)}</span></div>
+              <div style={s.totalRow}><span>Total GST</span><span>Rs.{totalTax.toFixed(2)}</span></div>
+              <div style={{ ...s.totalRow, fontWeight: 700, fontSize: "16px", borderTop: `1px solid ${t.border}`, paddingTop: "8px", marginTop: "4px" }}>
+                <span>Final Price</span><span>Rs.{parseFloat(grandTotal).toFixed(2)}</span>
               </div>
             </div>
           </div>

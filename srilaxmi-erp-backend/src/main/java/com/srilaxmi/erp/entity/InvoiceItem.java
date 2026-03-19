@@ -18,6 +18,8 @@ public class InvoiceItem {
 
     private BigDecimal totalPrice;
 
+    private BigDecimal discount;
+
     // COGS: weighted average cost from FIFO batch consumption
     private BigDecimal costPrice;
 
@@ -57,6 +59,14 @@ public class InvoiceItem {
 
     public void setTotalPrice(BigDecimal totalPrice) {
         this.totalPrice = totalPrice;
+    }
+
+    public BigDecimal getDiscount() {
+        return discount;
+    }
+
+    public void setDiscount(BigDecimal discount) {
+        this.discount = discount;
     }
 
     public Invoice getInvoice() {

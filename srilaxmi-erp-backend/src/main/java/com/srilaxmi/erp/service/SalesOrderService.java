@@ -77,6 +77,7 @@ public class SalesOrderService {
                 item.setProduct(product);
                 item.setSalesOrder(saved);
 
+                // The price sent from frontend already includes discount
                 BigDecimal lineTotal = item.getPrice().multiply(new BigDecimal(item.getQuantity()));
                 BigDecimal lineTax = lineTotal.multiply(BigDecimal.valueOf(product.getGst() / 100.0));
                 subTotal = subTotal.add(lineTotal);

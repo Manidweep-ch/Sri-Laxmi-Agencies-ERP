@@ -60,6 +60,34 @@ export default function LoginPage() {
           </div>
           <div style={{ color: "rgba(255,255,255,0.5)", fontSize: "14px", lineHeight: 1.7, maxWidth: "360px" }}>
             Complete ERP solution for pipes and sanitary distribution — inventory, orders, invoicing and more.
+            For Demo Use the Credentails
+            <br /><br />
+
+  <table style={{
+    borderCollapse: "collapse",
+    background: "rgba(255,255,255,0.05)",
+    borderRadius: "6px",
+    overflow: "hidden"
+  }}>
+    <thead>
+      <tr>
+        <th style={{ padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.1)", color: "#fff" }}>
+          Demo Credentials
+        </th>
+        <th style={{ padding: "6px 10px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style={{ padding: "6px 10px" }}>Username</td>
+        <td style={{ padding: "6px 10px", color: "#fff", fontWeight: "bold" }}>admin</td>
+      </tr>
+      <tr>
+        <td style={{ padding: "6px 10px" }}>Password</td>
+        <td style={{ padding: "6px 10px", color: "#fff", fontWeight: "bold" }}>admin123</td>
+      </tr>
+    </tbody>
+  </table>
           </div>
 
           <div style={{ display: "flex", gap: "24px", marginTop: "40px" }}>
@@ -108,7 +136,7 @@ export default function LoginPage() {
               border: `1px solid ${t.inputBorder}`, background: t.inputBg, color: t.text,
               fontSize: "14px", outline: "none", boxSizing: "border-box",
             }}
-              placeholder="Enter username" value={username}
+              placeholder="Enter username {Demo: admin}" value={username}
               onChange={e => setUsername(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleLogin()} />
           </div>
@@ -120,7 +148,7 @@ export default function LoginPage() {
               border: `1px solid ${t.inputBorder}`, background: t.inputBg, color: t.text,
               fontSize: "14px", outline: "none", boxSizing: "border-box",
             }}
-              type="password" placeholder="Enter password" value={password}
+              type="password" placeholder="Enter password {Demo: admin123}" value={password}
               onChange={e => setPassword(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleLogin()} />
           </div>
